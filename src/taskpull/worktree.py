@@ -30,10 +30,6 @@ def resolve_repo(raw: str) -> Path:
     return Path(raw).expanduser().resolve()
 
 
-def worktree_path(worktrees_dir: Path, repo: Path, branch: str) -> Path:
-    return worktrees_dir / repo.name / branch
-
-
 async def default_branch(repo: Path) -> str:
     proc = await _run(
         "git", "symbolic-ref", "refs/remotes/origin/HEAD",
@@ -50,26 +46,22 @@ async def fetch_origin(repo: Path) -> None:
 
 
 async def create_worktree(
-    worktrees_dir: Path, repo: Path, branch: str, base_ref: str,
+    worktrees_dir: Path, repo: Path, task_id: str, run_count: int, base_ref: str,
 ) -> Path:
-    wt = worktree_path(worktrees_dir, repo, branch)
+    wt = worktrees_dir / task_id / str(run_count)
     wt.parent.mkdir(parents=True, exist_ok=True)
     await _run(
-        "git", "worktree", "add", str(wt), "-b", branch, base_ref,
+        "git", "worktree", "add", "--detach", str(wt), base_ref,
         cwd=repo,
     )
     return wt
 
 
-async def cleanup_worktree(
-    worktrees_dir: Path, repo: Path, branch: str,
-) -> None:
-    wt = worktree_path(worktrees_dir, repo, branch)
-    if wt.exists():
+async def cleanup_worktree(repo: Path, worktree: Path) -> None:
+    if worktree.exists():
         proc = await _run(
-            "git", "worktree", "remove", "--force", str(wt),
+            "git", "worktree", "remove", "--force", str(worktree),
             cwd=repo, check=False,
         )
         if proc.returncode != 0:
-            shutil.rmtree(wt, ignore_errors=True)
-    await _run("git", "branch", "-D", branch, cwd=repo, check=False)
+            shutil.rmtree(worktree, ignore_errors=True)

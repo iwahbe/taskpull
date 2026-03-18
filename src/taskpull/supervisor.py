@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import libtmux
 
@@ -28,7 +29,8 @@ log = logging.getLogger(__name__)
 
 PR_INSTRUCTIONS = """
 
-When your work is ready, push your branch and create a PR:
+When your work is ready, create a descriptively named branch, push it, and open a PR:
+  git checkout -b your-descriptive-branch-name
   git push -u origin HEAD
   gh pr create --fill
 """
@@ -69,6 +71,14 @@ def _build_prompt(task: TaskFile) -> str:
     return prompt
 
 
+def _reset_task(ts: TaskState) -> None:
+    ts.status = TaskStatus.IDLE
+    ts.pr_number = None
+    ts.worktree = None
+    ts.session_id = None
+    ts.session_name = None
+
+
 async def run(config: Config, *, once: bool = False) -> None:
     log.info(
         "taskpull starting (poll_interval=%ds)", config.poll_interval,
@@ -87,7 +97,7 @@ async def run(config: Config, *, once: bool = False) -> None:
 
         _phase1_process_events(config, state)
         await _phase2_check_prs(config, state, tasks, server)
-        await _phase3_check_sessions(config, state, tasks, server)
+        await _phase3_check_sessions(config, state, server)
         await _phase4_launch(config, state, tasks, server)
 
         save_state(config.state_file, state)
@@ -126,6 +136,14 @@ def _phase1_process_events(
             clear_events(config.events_dir, task_id)
 
 
+async def _cleanup_task(ts: TaskState, server: libtmux.Server) -> None:
+    if ts.worktree and ts.repo:
+        repo = resolve_repo(ts.repo)
+        await cleanup_worktree(repo, Path(ts.worktree))
+    if ts.session_name:
+        kill_session(server, ts.session_name)
+
+
 async def _phase2_check_prs(
     config: Config,
     state: dict[str, TaskState],
@@ -147,42 +165,24 @@ async def _phase2_check_prs(
 
         if pr_state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
-            if ts.branch:
-                await cleanup_worktree(config.worktrees_dir, repo, ts.branch)
-            if ts.session_name:
-                kill_session(server, ts.session_name)
+            await _cleanup_task(ts, server)
             clear_events(config.events_dir, task_id)
 
             if task.repeat and not ts.exhausted:
-                ts.status = TaskStatus.IDLE
-                ts.pr_number = None
-                ts.branch = None
-                ts.worktree = None
-                ts.session_id = None
-                ts.session_name = None
+                _reset_task(ts)
             else:
                 ts.status = TaskStatus.DONE
 
         elif pr_state == "CLOSED":
             log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
-            if ts.branch:
-                await cleanup_worktree(config.worktrees_dir, repo, ts.branch)
-            if ts.session_name:
-                kill_session(server, ts.session_name)
+            await _cleanup_task(ts, server)
             clear_events(config.events_dir, task_id)
-
-            ts.status = TaskStatus.IDLE
-            ts.pr_number = None
-            ts.branch = None
-            ts.worktree = None
-            ts.session_id = None
-            ts.session_name = None
+            _reset_task(ts)
 
 
 async def _phase3_check_sessions(
     config: Config,
     state: dict[str, TaskState],
-    tasks: dict[str, TaskFile],
     server: libtmux.Server,
 ) -> None:
     log.info("Phase 3: Checking sessions")
@@ -195,15 +195,8 @@ async def _phase3_check_sessions(
         log.info("  %s: session ended", task_id)
 
         if ts.pr_number is not None:
-            # PR was already created via hook; phase 2 handles it.
             ts.status = TaskStatus.PR_OPEN
             continue
-
-        task = tasks.get(task_id)
-        if task is None or ts.repo is None:
-            continue
-
-        repo = resolve_repo(ts.repo)
 
         # Check events one more time for any last-moment PR creation.
         events = read_events(config.events_dir, task_id)
@@ -219,17 +212,10 @@ async def _phase3_check_sessions(
             )
             continue
 
-        # No PR. Clean up and reset.
         log.info("  %s: no PR, resetting to idle", task_id)
-        if ts.branch:
-            await cleanup_worktree(config.worktrees_dir, repo, ts.branch)
+        await _cleanup_task(ts, server)
         clear_events(config.events_dir, task_id)
-
-        ts.status = TaskStatus.IDLE
-        ts.branch = None
-        ts.worktree = None
-        ts.session_id = None
-        ts.session_name = None
+        _reset_task(ts)
 
 
 async def _phase4_launch(
@@ -264,17 +250,17 @@ async def _phase4_launch(
             continue
 
         ts.run_count += 1
-        branch = f"{task.branch_prefix}-{ts.run_count}"
         default_br = await default_branch(repo)
 
         log.info(
-            "  %s: launching run %d on %s (branch: %s)",
-            task_id, ts.run_count, repo, branch,
+            "  %s: launching run %d on %s",
+            task_id, ts.run_count, repo,
         )
 
         await fetch_origin(repo)
         wt = await create_worktree(
-            config.worktrees_dir, repo, branch, f"origin/{default_br}",
+            config.worktrees_dir, repo, task_id, ts.run_count,
+            f"origin/{default_br}",
         )
 
         write_hooks_config(wt, task_id, config.events_dir, config.notify_script)
@@ -285,7 +271,6 @@ async def _phase4_launch(
 
         ts.status = TaskStatus.ACTIVE
         ts.repo = task.repo
-        ts.branch = branch
         ts.worktree = str(wt)
         ts.session_name = session_name
         ts.session_id = None

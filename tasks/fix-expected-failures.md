@@ -1,7 +1,6 @@
 ---
 repo: ~/src/pulumi-foo
 repeat: true
-branch_prefix: iwahbe/fix-expected-failure
 ---
 
 Go to the expected failures list. Pick one expected failure that looks easy to fix.

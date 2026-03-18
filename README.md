@@ -34,7 +34,6 @@ Create a `.md` file in `~/.taskpull/tasks/`. The filename (minus extension) is t
 ---
 repo: ~/src/my-repo
 repeat: true
-branch_prefix: yourname/task-description
 ---
 
 Your prompt to Claude goes here. This is passed verbatim.
@@ -42,11 +41,12 @@ Your prompt to Claude goes here. This is passed verbatim.
 
 ### Fields
 
-| Field           | Required | Description |
-|-----------------|----------|-------------|
-| `repo`          | yes      | Path to the local repo clone |
-| `branch_prefix` | yes      | Branch name prefix. Supervisor appends `-<run>` |
-| `repeat`        | no       | `true` to re-run after each PR merge until `TASKPULL_DONE`. Default `false` |
+| Field    | Required | Description |
+|----------|----------|-------------|
+| `repo`   | yes      | Path to the local repo clone |
+| `repeat` | no       | `true` to re-run after each PR merge until `TASKPULL_DONE`. Default `false` |
+
+Claude chooses its own branch name when creating a PR.
 
 ## Configuration
 
@@ -72,7 +72,7 @@ Claude is instructed to push its branch and create a PR via `gh pr create` when 
 
 - One active or pr-open task per repo at a time.
 - Each run starts from a fresh worktree off `origin/main` (or whatever the default branch is).
-- Worktrees live in `~/.taskpull/worktrees/<repo-name>/<branch>`.
+- Worktrees live in `~/.taskpull/worktrees/<task-id>/<run-count>`.
 
 ## Interacting with sessions
 

@@ -7,7 +7,6 @@ from pathlib import Path
 @dataclass(frozen=True)
 class TaskFile:
     repo: str
-    branch_prefix: str
     repeat: bool
     prompt: str
 
@@ -39,15 +38,13 @@ def parse_task(path: Path) -> TaskFile:
             raise ValueError(f"{path}: malformed frontmatter line: {line!r}")
         fields[key.strip()] = value.strip()
 
-    for required in ("repo", "branch_prefix"):
-        if required not in fields:
-            raise ValueError(f"{path}: missing required field '{required}'")
+    if "repo" not in fields:
+        raise ValueError(f"{path}: missing required field 'repo'")
 
     prompt = "\n".join(lines[close_idx + 1 :]).strip()
 
     return TaskFile(
         repo=fields["repo"],
-        branch_prefix=fields["branch_prefix"],
         repeat=fields.get("repeat", "false").lower() == "true",
         prompt=prompt,
     )
@@ -61,7 +58,7 @@ def discover_tasks(tasks_dir: Path) -> dict[str, TaskFile]:
     result: dict[str, TaskFile] = {}
     if not tasks_dir.is_dir():
         return result
-    for path in sorted(tasks_dir.glob("*.md")):
+    for path in sorted(tasks_dir.glob("[!.]*.md")):
         task_id = task_id_from_path(path)
         result[task_id] = parse_task(path)
     return result

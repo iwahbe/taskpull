@@ -20,7 +20,6 @@ class TaskState:
     session_id: str | None = None
     session_name: str | None = None
     pr_number: int | None = None
-    branch: str | None = None
     worktree: str | None = None
     repo: str | None = None
     run_count: int = 0
