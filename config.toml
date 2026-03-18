@@ -1,0 +1,4 @@
+# taskpull configuration
+
+# Seconds between poll cycles
+poll_interval = 300

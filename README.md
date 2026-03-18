@@ -1,0 +1,98 @@
+# taskpull
+
+Pull-based multi-repo Claude Code task runner. Ensures each configured repo always has one active Claude Code session working through a task list, visible in your Claude app via Remote Control.
+
+## Requirements
+
+- `claude` CLI >= 2.1.51, logged in (`claude /login`)
+- `gh` CLI, authenticated
+- `tmux`
+- `uv` (Python 3.12+)
+
+## Setup
+
+1. Clone this repo.
+2. Create `~/.taskpull/` with your config and tasks:
+
+```
+~/.taskpull/
+├── config.toml     # poll interval and other settings
+├── tasks/          # task definition files
+│   └── my-task.md
+├── state.json      # managed by supervisor (gitignored equivalent)
+├── events/         # hook event files (managed by supervisor)
+└── worktrees/      # git worktrees for active tasks
+```
+
+3. Run `uv run python -m taskpull`.
+
+## Task file format
+
+Create a `.md` file in `~/.taskpull/tasks/`. The filename (minus extension) is the task ID.
+
+```markdown
+---
+repo: ~/src/my-repo
+repeat: true
+branch_prefix: yourname/task-description
+---
+
+Your prompt to Claude goes here. This is passed verbatim.
+```
+
+### Fields
+
+| Field           | Required | Description |
+|-----------------|----------|-------------|
+| `repo`          | yes      | Path to the local repo clone |
+| `branch_prefix` | yes      | Branch name prefix. Supervisor appends `-<run>` |
+| `repeat`        | no       | `true` to re-run after each PR merge until `TASKPULL_DONE`. Default `false` |
+
+## Configuration
+
+`~/.taskpull/config.toml`:
+
+```toml
+# Seconds between poll cycles
+poll_interval = 300
+```
+
+## How it works
+
+The supervisor polls every `poll_interval` seconds and runs four phases:
+
+1. **Process events** — read hook events from Claude sessions. When Claude creates a PR, the hook captures the PR number and associates it with the task.
+2. **Check PRs** — if a taskpull PR was merged or closed, free that repo's slot.
+3. **Check sessions** — if a Claude session exited without creating a PR, reset the task.
+4. **Launch** — for each repo with no active/pr-open task, pick the next eligible task, create a worktree, configure hooks, and start a Claude session.
+
+Claude is instructed to push its branch and create a PR via `gh pr create` when work is complete. A per-worktree `.claude/settings.local.json` configures hooks that report session starts and PR creation events back to the supervisor via JSONL event files.
+
+### Constraints
+
+- One active or pr-open task per repo at a time.
+- Each run starts from a fresh worktree off `origin/main` (or whatever the default branch is).
+- Worktrees live in `~/.taskpull/worktrees/<repo-name>/<branch>`.
+
+## Interacting with sessions
+
+All sessions register with Remote Control. Open the Claude app (iOS, Android, or claude.ai/code) and you'll see your running sessions listed by name. Tap any one to steer it, approve actions, or just watch.
+
+## Commands
+
+```bash
+# Run continuously
+uv run python -m taskpull
+
+# Run a single poll cycle (useful for testing)
+uv run python -m taskpull --once
+
+# Use a different user directory
+uv run python -m taskpull --user-dir /path/to/dir
+```
+
+## State
+
+`~/.taskpull/state.json` tracks active tasks, PR numbers, session IDs, and run counts. Managed by the supervisor. You can manually edit it to reset `exhausted` flags or change status.
+
+`~/.taskpull/events/` contains per-task JSONL files written by Claude Code hooks. These are consumed and cleared by the supervisor during each poll cycle.

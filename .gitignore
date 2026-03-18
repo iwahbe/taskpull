@@ -1,0 +1,6 @@
+state.json
+events/
+.session-output-*
+__pycache__/
+*.pyc
+.venv/
