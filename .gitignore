@@ -4,3 +4,6 @@ events/
 __pycache__/
 *.pyc
 .venv/
+daemon.pid
+daemon.sock
+daemon.log

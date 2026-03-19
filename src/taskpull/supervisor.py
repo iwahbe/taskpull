@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from pathlib import Path
+from typing import Any
 
 import libtmux
 
@@ -14,6 +16,7 @@ from .hooks import (
     read_events,
     write_hooks_config,
 )
+from .ipc import run_ipc_server
 from .state import TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks
 from .worktree import (
@@ -79,7 +82,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.session_name = None
 
 
-async def run(config: Config, *, once: bool = False) -> None:
+async def run(config: Config) -> None:
     log.info(
         "taskpull starting (poll_interval=%ds)", config.poll_interval,
     )
@@ -87,27 +90,61 @@ async def run(config: Config, *, once: bool = False) -> None:
     log.info("State file: %s", config.state_file)
 
     config.events_dir.mkdir(parents=True, exist_ok=True)
-    server = libtmux.Server()
+    tmux_server = libtmux.Server()
 
-    while True:
-        log.info("--- Poll cycle ---")
+    shutdown_event = asyncio.Event()
+    refresh_event = asyncio.Event()
 
-        state = load_state(config.state_file)
-        tasks = discover_tasks(config.tasks_dir)
+    current_state: dict[str, TaskState] = {}
 
-        _phase1_process_events(config, state)
-        await _phase2_check_prs(config, state, tasks, server)
-        await _phase3_check_sessions(config, state, server)
-        await _phase4_launch(config, state, tasks, server)
+    async def ipc_handler(request: dict[str, Any]) -> dict[str, Any]:
+        command = request.get("command")
+        if command == "refresh":
+            refresh_event.set()
+            return {"status": "ok"}
+        if command == "stop":
+            shutdown_event.set()
+            return {"status": "ok"}
+        if command == "list":
+            return {
+                "status": "ok",
+                "tasks": {k: v.to_dict() for k, v in current_state.items()},
+            }
+        return {"status": "error", "message": f"unknown command: {command}"}
 
-        save_state(config.state_file, state)
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, shutdown_event.set)
 
-        if once:
-            log.info("Single cycle complete.")
-            break
+    ipc_task = asyncio.create_task(
+        run_ipc_server(config.sock_file, ipc_handler, shutdown_event),
+    )
 
-        log.info("Sleeping %ds", config.poll_interval)
-        await asyncio.sleep(config.poll_interval)
+    try:
+        while not shutdown_event.is_set():
+            log.info("--- Poll cycle ---")
+
+            state = load_state(config.state_file)
+            tasks = discover_tasks(config.tasks_dir)
+
+            _phase1_process_events(config, state)
+            await _phase2_check_prs(config, state, tasks, tmux_server)
+            await _phase3_check_sessions(config, state, tmux_server)
+            await _phase4_launch(config, state, tasks, tmux_server)
+
+            save_state(config.state_file, state)
+            current_state.clear()
+            current_state.update(state)
+
+            refresh_event.clear()
+            try:
+                await asyncio.wait_for(refresh_event.wait(), timeout=config.poll_interval)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        shutdown_event.set()
+        await ipc_task
+        log.info("taskpull stopped")
 
 
 def _phase1_process_events(

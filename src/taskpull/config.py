@@ -28,6 +28,18 @@ class Config:
         return self.user_dir / "worktrees"
 
     @property
+    def pid_file(self) -> Path:
+        return self.user_dir / "daemon.pid"
+
+    @property
+    def sock_file(self) -> Path:
+        return self.user_dir / "daemon.sock"
+
+    @property
+    def log_file(self) -> Path:
+        return self.user_dir / "daemon.log"
+
+    @property
     def notify_script(self) -> Path:
         return Path(str(files("taskpull").joinpath("notify.py")))
 
