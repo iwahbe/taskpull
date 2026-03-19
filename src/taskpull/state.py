@@ -24,6 +24,7 @@ class TaskState:
     repo: str | None = None
     run_count: int = 0
     exhausted: bool = False
+    pr_draft: bool = False
 
     def to_dict(self) -> dict:
         d = asdict(self)

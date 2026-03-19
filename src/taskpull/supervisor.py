@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,23 +45,42 @@ If there is nothing left to do, call the task_done MCP tool and exit.
 """
 
 
-async def _check_pr_state(repo_path: str, pr_number: int) -> str:
+@dataclass
+class PrInfo:
+    state: str
+    is_draft: bool
+
+
+async def _check_pr_state(repo_path: str, pr_number: int) -> PrInfo:
     proc = await asyncio.create_subprocess_exec(
-        "gh", "pr", "view", str(pr_number),
-        "--repo", repo_path,
-        "--json", "state", "-q", ".state",
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        repo_path,
+        "--json",
+        "state,isDraft",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, _ = await proc.communicate()
     if proc.returncode != 0:
-        return "UNKNOWN"
-    return stdout.decode().strip()
+        return PrInfo(state="UNKNOWN", is_draft=False)
+    data = json.loads(stdout.decode())
+    return PrInfo(
+        state=data.get("state", "UNKNOWN"), is_draft=data.get("isDraft", False)
+    )
 
 
 async def _get_remote_url(repo_path: str) -> str:
     proc = await asyncio.create_subprocess_exec(
-        "git", "-C", repo_path, "remote", "get-url", "origin",
+        "git",
+        "-C",
+        repo_path,
+        "remote",
+        "get-url",
+        "origin",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -77,6 +98,7 @@ def _build_prompt(task: TaskFile) -> str:
 def _reset_task(ts: TaskState) -> None:
     ts.status = TaskStatus.IDLE
     ts.pr_number = None
+    ts.pr_draft = False
     ts.worktree = None
     ts.session_id = None
     ts.session_name = None
@@ -84,7 +106,8 @@ def _reset_task(ts: TaskState) -> None:
 
 async def run(config: Config) -> None:
     log.info(
-        "taskpull starting (poll_interval=%ds)", config.poll_interval,
+        "taskpull starting (poll_interval=%ds)",
+        config.poll_interval,
     )
     log.info("Tasks dir: %s", config.tasks_dir)
     log.info("State file: %s", config.state_file)
@@ -148,7 +171,9 @@ async def run(config: Config) -> None:
 
             refresh_event.clear()
             try:
-                await asyncio.wait_for(refresh_event.wait(), timeout=config.poll_interval)
+                await asyncio.wait_for(
+                    refresh_event.wait(), timeout=config.poll_interval
+                )
             except asyncio.TimeoutError:
                 pass
     finally:
@@ -176,7 +201,9 @@ def _phase1_process_events(
                 ts.status = TaskStatus.PR_OPEN
                 log.info(
                     "  %s: PR #%d created (%s)",
-                    task_id, event.pr_number, event.pr_url,
+                    task_id,
+                    event.pr_number,
+                    event.pr_url,
                 )
 
         if events:
@@ -208,9 +235,10 @@ async def _phase2_check_prs(
 
         repo = resolve_repo(ts.repo)
         remote_url = await _get_remote_url(str(repo))
-        pr_state = await _check_pr_state(remote_url, ts.pr_number)
+        pr_info = await _check_pr_state(remote_url, ts.pr_number)
+        ts.pr_draft = pr_info.is_draft
 
-        if pr_state == "MERGED":
+        if pr_info.state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
             await _cleanup_task(ts, server)
             clear_events(config.events_dir, task_id)
@@ -220,7 +248,7 @@ async def _phase2_check_prs(
             else:
                 ts.status = TaskStatus.DONE
 
-        elif pr_state == "CLOSED":
+        elif pr_info.state == "CLOSED":
             log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
             await _cleanup_task(ts, server)
             clear_events(config.events_dir, task_id)
@@ -248,14 +276,17 @@ async def _phase3_check_sessions(
         # Check events one more time for any last-moment PR creation.
         events = read_events(config.events_dir, task_id)
         pr_event = next(
-            (e for e in events if isinstance(e, PrCreatedEvent)), None,
+            (e for e in events if isinstance(e, PrCreatedEvent)),
+            None,
         )
         if pr_event:
             ts.pr_number = pr_event.pr_number
             ts.status = TaskStatus.PR_OPEN
             clear_events(config.events_dir, task_id)
             log.info(
-                "  %s: late PR #%d detected", task_id, pr_event.pr_number,
+                "  %s: late PR #%d detected",
+                task_id,
+                pr_event.pr_number,
             )
             continue
 
@@ -304,18 +335,27 @@ async def _phase4_launch(
 
         log.info(
             "  %s: launching run %d on %s",
-            task_id, ts.run_count, repo,
+            task_id,
+            ts.run_count,
+            repo,
         )
 
         await fetch_origin(repo)
         wt = await create_worktree(
-            config.worktrees_dir, repo, task_id, ts.run_count,
+            config.worktrees_dir,
+            repo,
+            task_id,
+            ts.run_count,
             f"origin/{default_br}",
         )
 
         write_hooks_config(
-            wt, task_id, config.events_dir, config.notify_script,
-            config.mcp_server_script, config.sock_file,
+            wt,
+            task_id,
+            config.events_dir,
+            config.notify_script,
+            config.mcp_server_script,
+            config.sock_file,
         )
 
         prompt = _build_prompt(task)
