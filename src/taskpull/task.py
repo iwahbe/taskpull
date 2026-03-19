@@ -9,6 +9,7 @@ class TaskFile:
     repo: str
     repeat: bool
     prompt: str
+    repo_lock: str | None = None
 
 
 def parse_task(path: Path) -> TaskFile:
@@ -47,6 +48,7 @@ def parse_task(path: Path) -> TaskFile:
         repo=fields["repo"],
         repeat=fields.get("repeat", "false").lower() == "true",
         prompt=prompt,
+        repo_lock=fields.get("repo_lock"),
     )
 
 

@@ -273,10 +273,12 @@ async def _phase4_launch(
 ) -> None:
     log.info("Phase 4: Launching new work")
 
-    busy_repos: set[str] = set()
-    for ts in state.values():
+    busy_locks: set[tuple[str, str]] = set()
+    for tid, ts in state.items():
         if ts.status in (TaskStatus.ACTIVE, TaskStatus.PR_OPEN) and ts.repo:
-            busy_repos.add(ts.repo)
+            task = tasks.get(tid)
+            lock = task.repo_lock if task and task.repo_lock else ts.repo
+            busy_locks.add((ts.repo, lock))
 
     for task_id, task in tasks.items():
         ts = state.get(task_id)
@@ -288,7 +290,8 @@ async def _phase4_launch(
             continue
         if ts.exhausted:
             continue
-        if task.repo in busy_repos:
+        lock = task.repo_lock if task.repo_lock else task.repo
+        if (task.repo, lock) in busy_locks:
             continue
 
         repo = resolve_repo(task.repo)
@@ -326,4 +329,4 @@ async def _phase4_launch(
         ts.session_id = None
         ts.pr_number = None
 
-        busy_repos.add(task.repo)
+        busy_locks.add((task.repo, lock))

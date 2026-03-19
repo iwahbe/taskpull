@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .config import Config
+from .ipc import send_command
 
 
 def read_pid(config: Config) -> int | None:
@@ -58,16 +59,32 @@ def daemonize(log_file: Path) -> None:
 def stop_daemon(config: Config) -> None:
     running, pid = is_daemon_running(config)
     if not running:
-        print("daemon is not running (start with `taskpull start`)")
+        if pid is not None:
+            # Stale PID file — process is already dead, just clean up.
+            remove_pid(config)
+            print(f"removed stale PID file (PID {pid})")
+        else:
+            print("daemon is not running (start with `taskpull start`)")
         sys.exit(1)
 
     assert pid is not None
+
+    # Verify this is actually our daemon by checking the socket, not just the PID
+    # (the PID could have been reused by an unrelated process).
+    try:
+        send_command(config.sock_file, "ping")
+    except (OSError, ValueError):
+        remove_pid(config)
+        print(f"removed stale PID file (PID {pid} is not the taskpull daemon)")
+        sys.exit(1)
+
     os.kill(pid, signal.SIGTERM)
 
     for _ in range(50):
         try:
             os.kill(pid, 0)
         except OSError:
+            remove_pid(config)
             print(f"daemon (PID {pid}) stopped")
             return
         time.sleep(0.1)
