@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 
 import libtmux
@@ -16,7 +17,7 @@ def launch_session(
     run_count: int,
     task_id: str,
 ) -> str:
-    prompt_file = worktree / ".taskpull-prompt"
+    prompt_file = Path(tempfile.mktemp(prefix=f"taskpull-{task_id}-", suffix=".txt"))
     prompt_file.write_text(prompt)
 
     cmd = (
