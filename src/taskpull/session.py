@@ -25,7 +25,7 @@ def launch_session(
         f"claude "
         f"--remote-control "
         f"--name '{task_id} (run {run_count})' "
-        f"--allowedTools 'Bash,Read,Write,Edit' "
+        f"--allowedTools 'Bash,Read,Write,Edit,mcp__taskpull__task_done' "
         f"< {prompt_file!s}; "
         f"rm -f {prompt_file!s}; "
         f"sleep 5"

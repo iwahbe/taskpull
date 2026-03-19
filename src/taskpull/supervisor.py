@@ -39,7 +39,7 @@ When your work is ready, create a descriptively named branch, push it, and open 
 """
 
 REPEAT_SUFFIX = """
-If there is nothing left to do, output the exact text TASKPULL_DONE and exit.
+If there is nothing left to do, call the task_done MCP tool and exit.
 """
 
 
@@ -110,6 +110,16 @@ async def run(config: Config) -> None:
                 "status": "ok",
                 "tasks": {k: v.to_dict() for k, v in current_state.items()},
             }
+        if command == "task_done":
+            tid: str = request.get("task_id", "")
+            ts = current_state.get(tid)
+            if ts is None:
+                return {"status": "error", "message": f"unknown task: {tid}"}
+            ts.exhausted = True
+            save_state(config.state_file, current_state)
+            refresh_event.set()
+            log.info("task_done received for %s", tid)
+            return {"status": "ok"}
         return {"status": "error", "message": f"unknown command: {command}"}
 
     loop = asyncio.get_running_loop()
@@ -300,7 +310,10 @@ async def _phase4_launch(
             f"origin/{default_br}",
         )
 
-        write_hooks_config(wt, task_id, config.events_dir, config.notify_script)
+        write_hooks_config(
+            wt, task_id, config.events_dir, config.notify_script,
+            config.mcp_server_script, config.sock_file,
+        )
 
         prompt = _build_prompt(task)
         session_name = f"taskpull-{task_id}"

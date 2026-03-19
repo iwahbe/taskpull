@@ -43,6 +43,10 @@ class Config:
     def notify_script(self) -> Path:
         return Path(str(files("taskpull").joinpath("notify.py")))
 
+    @property
+    def mcp_server_script(self) -> Path:
+        return Path(str(files("taskpull").joinpath("mcp_server.py")))
+
 
 def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:
     config_file = user_dir / "config.toml"

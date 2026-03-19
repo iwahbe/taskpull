@@ -36,10 +36,22 @@ def write_hooks_config(
     task_id: str,
     events_dir: Path,
     notify_script: Path,
+    mcp_server_script: Path,
+    sock_path: Path,
 ) -> None:
     events_file = (events_dir / f"{task_id}.jsonl").resolve()
 
     config = {
+        "mcpServers": {
+            "taskpull": {
+                "command": "python3",
+                "args": [
+                    str(mcp_server_script),
+                    "--sock", str(sock_path),
+                    "--task-id", task_id,
+                ],
+            },
+        },
         "hooks": {
             "SessionStart": [
                 {
@@ -63,7 +75,7 @@ def write_hooks_config(
                     ],
                 }
             ],
-        }
+        },
     }
 
     claude_dir = worktree / ".claude"
