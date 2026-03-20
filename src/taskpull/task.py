@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .worktree import resolve_repo
+
 
 @dataclass(frozen=True)
 class TaskFile:
@@ -84,7 +86,13 @@ def validate_tasks(tasks_dir: Path) -> ValidationResult:
     for path in sorted(tasks_dir.glob("[!.]*.md")):
         task_id = task_id_from_path(path)
         try:
-            tasks[task_id] = parse_task(path)
+            task = parse_task(path)
         except ValueError as e:
             errors[task_id] = str(e)
+            continue
+        repo = resolve_repo(task.repo)
+        if not repo.exists():
+            errors[task_id] = f"{path}: repo does not exist: {repo}"
+            continue
+        tasks[task_id] = task
     return ValidationResult(tasks=tasks, errors=errors)
