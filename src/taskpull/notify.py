@@ -29,7 +29,21 @@ def main(events_file: Path) -> None:
 
     event = None
 
-    if event_name == "SessionStart":
+    if event_name == "PreToolUse":
+        event = {
+            "type": "activity",
+            "activity": "active",
+            "timestamp": timestamp,
+        }
+
+    elif event_name == "Stop":
+        event = {
+            "type": "activity",
+            "activity": "idle",
+            "timestamp": timestamp,
+        }
+
+    elif event_name == "SessionStart":
         event = {
             "type": "session_start",
             "session_id": session_id,

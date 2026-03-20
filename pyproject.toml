@@ -17,3 +17,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/taskpull"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.7",
+    "ty>=0.0.24",
+]

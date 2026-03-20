@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 class EventType(enum.Enum):
     SESSION_START = "session_start"
     PR_CREATED = "pr_created"
+    ACTIVITY = "activity"
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,13 @@ class PrCreatedEvent:
     timestamp: str
 
 
-Event = SessionStartEvent | PrCreatedEvent
+@dataclass(frozen=True)
+class ActivityEvent:
+    activity: str  # "active" or "idle"
+    timestamp: str
+
+
+Event = SessionStartEvent | PrCreatedEvent | ActivityEvent
 
 
 def write_hooks_config(
@@ -66,9 +73,31 @@ def write_hooks_config(
                     ],
                 }
             ],
+            "PreToolUse": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": notify_cmd,
+                        }
+                    ],
+                }
+            ],
             "PostToolUse": [
                 {
                     "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": notify_cmd,
+                        }
+                    ],
+                }
+            ],
+            "Stop": [
+                {
+                    "matcher": "",
                     "hooks": [
                         {
                             "type": "command",
@@ -114,6 +143,13 @@ def read_events(events_dir: Path, task_id: str) -> list[Event]:
                         session_id=raw["session_id"],
                         pr_url=raw["pr_url"],
                         pr_number=raw["pr_number"],
+                        timestamp=raw["timestamp"],
+                    )
+                )
+            elif event_type == EventType.ACTIVITY:
+                events.append(
+                    ActivityEvent(
+                        activity=raw["activity"],
                         timestamp=raw["timestamp"],
                     )
                 )

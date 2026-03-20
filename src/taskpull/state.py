@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import json
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 
@@ -24,6 +24,7 @@ class TaskState:
     run_count: int = 0
     exhausted: bool = False
     pr_draft: bool = False
+    activity: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -37,7 +38,8 @@ class TaskState:
         if raw_status == "pr_open":
             raw_status = "active"
         d["status"] = TaskStatus(raw_status)
-        return cls(**d)
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 def load_state(path: Path) -> dict[str, TaskState]:

@@ -12,6 +12,7 @@ import libtmux
 
 from .config import Config
 from .hooks import (
+    ActivityEvent,
     PrCreatedEvent,
     SessionStartEvent,
     clear_events,
@@ -102,6 +103,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.worktree = None
     ts.session_id = None
     ts.session_name = None
+    ts.activity = None
 
 
 async def run(config: Config) -> None:
@@ -215,6 +217,7 @@ def _phase1_process_events(
             continue
 
         events = read_events(config.events_dir, task_id)
+        last_activity: ActivityEvent | None = None
         for event in events:
             if isinstance(event, SessionStartEvent):
                 ts.session_id = event.session_id
@@ -227,6 +230,11 @@ def _phase1_process_events(
                     event.pr_number,
                     event.pr_url,
                 )
+            elif isinstance(event, ActivityEvent):
+                last_activity = event
+
+        if last_activity is not None:
+            ts.activity = last_activity.activity
 
         if events:
             clear_events(config.events_dir, task_id)
@@ -378,5 +386,6 @@ async def _phase4_launch(
         ts.session_name = session_name
         ts.session_id = None
         ts.pr_number = None
+        ts.activity = "active"
 
         busy_locks.add((task.repo, lock))

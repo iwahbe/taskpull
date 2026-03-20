@@ -116,6 +116,12 @@ def cmd_list(config):
             status = "pr_draft"
         elif info.get("pr_number"):
             status = "pr_open"
+        elif status == "active":
+            activity = info.get("activity")
+            if activity == "idle":
+                status = "idle"
+            elif activity == "active":
+                status = "working"
         rows.append((task_id, status, pr, repo, runs))
 
     headers = ("TASK", "STATUS", "PR", "REPO", "RUNS")

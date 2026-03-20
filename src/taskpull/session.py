@@ -17,8 +17,10 @@ def launch_session(
     run_count: int,
     task_id: str,
 ) -> str:
-    prompt_file = Path(tempfile.mktemp(prefix=f"taskpull-{task_id}-", suffix=".txt"))
-    prompt_file.write_text(prompt)
+    fd, tmp = tempfile.mkstemp(prefix=f"taskpull-{task_id}-", suffix=".txt")
+    prompt_file = Path(tmp)
+    with open(fd, "w") as f:
+        f.write(prompt)
 
     cmd = (
         f"cd {worktree!s} && "
