@@ -20,7 +20,7 @@ from .hooks import (
 )
 from .ipc import run_ipc_server
 from .state import TaskState, TaskStatus, load_state, save_state
-from .task import TaskFile, discover_tasks
+from .task import TaskFile, discover_tasks, validate_tasks
 from .worktree import (
     cleanup_worktree,
     create_worktree,
@@ -133,6 +133,24 @@ async def run(config: Config) -> None:
                 "status": "ok",
                 "tasks": {k: v.to_dict() for k, v in current_state.items()},
             }
+        if command == "status":
+            result = validate_tasks(config.tasks_dir)
+            return {
+                "status": "ok",
+                "tasks": {
+                    tid: {
+                        "repo": tf.repo,
+                        "repeat": tf.repeat,
+                        "repo_lock": tf.repo_lock,
+                        "has_prompt": bool(tf.prompt),
+                        "state": current_state[tid].to_dict()
+                        if tid in current_state
+                        else None,
+                    }
+                    for tid, tf in result.tasks.items()
+                },
+                "errors": result.errors,
+            }
         if command == "task_done":
             tid: str = request.get("task_id", "")
             ts = current_state.get(tid)
@@ -146,8 +164,13 @@ async def run(config: Config) -> None:
         return {"status": "error", "message": f"unknown command: {command}"}
 
     loop = asyncio.get_running_loop()
+
+    def _shutdown():
+        shutdown_event.set()
+        refresh_event.set()
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, shutdown_event.set)
+        loop.add_signal_handler(sig, _shutdown)
 
     ipc_task = asyncio.create_task(
         run_ipc_server(config.sock_file, ipc_handler, shutdown_event),

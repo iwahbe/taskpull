@@ -64,3 +64,23 @@ def discover_tasks(tasks_dir: Path) -> dict[str, TaskFile]:
         task_id = task_id_from_path(path)
         result[task_id] = parse_task(path)
     return result
+
+
+@dataclass(frozen=True)
+class ValidationResult:
+    tasks: dict[str, TaskFile]
+    errors: dict[str, str]
+
+
+def validate_tasks(tasks_dir: Path) -> ValidationResult:
+    tasks: dict[str, TaskFile] = {}
+    errors: dict[str, str] = {}
+    if not tasks_dir.is_dir():
+        return ValidationResult(tasks=tasks, errors=errors)
+    for path in sorted(tasks_dir.glob("[!.]*.md")):
+        task_id = task_id_from_path(path)
+        try:
+            tasks[task_id] = parse_task(path)
+        except ValueError as e:
+            errors[task_id] = str(e)
+    return ValidationResult(tasks=tasks, errors=errors)

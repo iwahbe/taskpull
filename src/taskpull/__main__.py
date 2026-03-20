@@ -51,6 +51,40 @@ def cmd_status(config):
         sys.exit(1)
     print(f"daemon is running (PID {pid})")
 
+    try:
+        response = send_command(config.sock_file, "status")
+    except (ConnectionRefusedError, FileNotFoundError):
+        print("could not connect to daemon")
+        sys.exit(1)
+
+    errors = response.get("errors", {})
+    tasks = response.get("tasks", {})
+
+    if errors:
+        print()
+        print(f"Task errors ({len(errors)}):")
+        for task_id, msg in sorted(errors.items()):
+            print(f"  {task_id}: {msg}")
+
+    if tasks:
+        print()
+        print(f"Tasks ({len(tasks)}):")
+        for task_id, info in sorted(tasks.items()):
+            parts = [info["repo"]]
+            if info.get("repeat"):
+                parts.append("repeat")
+            if info.get("repo_lock"):
+                parts.append(f"lock={info['repo_lock']}")
+            if not info.get("has_prompt"):
+                parts.append("NO PROMPT")
+            state = info.get("state")
+            if state:
+                parts.append(state["status"])
+            print(f"  {task_id}: {', '.join(parts)}")
+
+    if not errors and not tasks:
+        print("\nNo tasks found.")
+
 
 def _require_daemon(config):
     running, _ = is_daemon_running(config)
@@ -126,7 +160,7 @@ def main() -> None:
     )
     subparsers.add_parser("start", help="Start the daemon")
     subparsers.add_parser("stop", help="Stop the daemon")
-    subparsers.add_parser("status", help="Show whether daemon is running")
+    subparsers.add_parser("status", help="Show daemon status and validate tasks")
     subparsers.add_parser("list", help="Show tasks and their states")
     subparsers.add_parser("refresh", help="Trigger an immediate poll cycle")
 
