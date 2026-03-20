@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def cmd_start(config):
 
     config.user_dir.mkdir(parents=True, exist_ok=True)
 
-    daemonize(config.log_file)
+    ready_fd = daemonize(config.log_file)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -33,6 +34,10 @@ def cmd_start(config):
     )
 
     write_pid(config)
+
+    os.write(ready_fd, b"\x00")
+    os.close(ready_fd)
+
     try:
         asyncio.run(run(config))
     finally:

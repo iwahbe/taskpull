@@ -36,14 +36,31 @@ def remove_pid(config: Config) -> None:
     config.pid_file.unlink(missing_ok=True)
 
 
-def daemonize(log_file: Path) -> None:
+def daemonize(log_file: Path) -> int:
+    """Double-fork to daemonize.
+
+    Returns a file descriptor that the daemon must write a byte to once it is
+    ready.  The original (parent) process blocks on this fd and exits only
+    after the daemon signals readiness — or exits non-zero if the pipe closes
+    without a signal (daemon crashed before becoming ready).
+    """
+    read_fd, write_fd = os.pipe()
+
     if os.fork() > 0:
-        sys.exit(0)
+        os.close(write_fd)
+        # Block until the daemon writes a readiness byte or the pipe closes.
+        data = os.read(read_fd, 1)
+        os.close(read_fd)
+        sys.exit(0 if data else 1)
 
     os.setsid()
 
     if os.fork() > 0:
-        sys.exit(0)
+        os.close(read_fd)
+        os.close(write_fd)
+        os._exit(0)
+
+    os.close(read_fd)
 
     sys.stdout.flush()
     sys.stderr.flush()
@@ -54,6 +71,8 @@ def daemonize(log_file: Path) -> None:
     log_fd = open(log_file, "a")
     os.dup2(log_fd.fileno(), sys.stdout.fileno())
     os.dup2(log_fd.fileno(), sys.stderr.fileno())
+
+    return write_fd
 
 
 def stop_daemon(config: Config) -> None:
