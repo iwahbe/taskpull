@@ -20,9 +20,7 @@ async def _run(
     await proc.wait()
     if check and proc.returncode != 0:
         stderr = (await proc.stderr.read()).decode() if proc.stderr else ""
-        raise RuntimeError(
-            f"command {args!r} failed (rc={proc.returncode}): {stderr}"
-        )
+        raise RuntimeError(f"command {args!r} failed (rc={proc.returncode}): {stderr}")
     return proc
 
 
@@ -32,8 +30,11 @@ def resolve_repo(raw: str) -> Path:
 
 async def default_branch(repo: Path) -> str:
     proc = await _run(
-        "git", "symbolic-ref", "refs/remotes/origin/HEAD",
-        cwd=repo, check=False,
+        "git",
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        cwd=repo,
+        check=False,
     )
     if proc.returncode == 0 and proc.stdout:
         ref = (await proc.stdout.read()).decode().strip()
@@ -46,12 +47,21 @@ async def fetch_origin(repo: Path) -> None:
 
 
 async def create_worktree(
-    worktrees_dir: Path, repo: Path, task_id: str, run_count: int, base_ref: str,
+    worktrees_dir: Path,
+    repo: Path,
+    task_id: str,
+    run_count: int,
+    base_ref: str,
 ) -> Path:
     wt = worktrees_dir / task_id / str(run_count)
     wt.parent.mkdir(parents=True, exist_ok=True)
     await _run(
-        "git", "worktree", "add", "--detach", str(wt), base_ref,
+        "git",
+        "worktree",
+        "add",
+        "--detach",
+        str(wt),
+        base_ref,
         cwd=repo,
     )
     return wt
@@ -60,8 +70,13 @@ async def create_worktree(
 async def cleanup_worktree(repo: Path, worktree: Path) -> None:
     if worktree.exists():
         proc = await _run(
-            "git", "worktree", "remove", "--force", str(worktree),
-            cwd=repo, check=False,
+            "git",
+            "worktree",
+            "remove",
+            "--force",
+            str(worktree),
+            cwd=repo,
+            check=False,
         )
         if proc.returncode != 0:
             shutil.rmtree(worktree, ignore_errors=True)

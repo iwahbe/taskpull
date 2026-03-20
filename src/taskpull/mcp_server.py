@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import socket
 from pathlib import Path
@@ -30,15 +29,7 @@ def _send_task_done(sock_path: Path, task_id: str) -> dict:
         sock.close()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sock", required=True)
-    parser.add_argument("--task-id", required=True)
-    args = parser.parse_args()
-
-    sock_path = Path(args.sock)
-    task_id = args.task_id
-
+def main(sock_path: Path, task_id: str) -> None:
     mcp = FastMCP("taskpull")
 
     @mcp.tool()
@@ -56,4 +47,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse as _argparse
+
+    _parser = _argparse.ArgumentParser()
+    _parser.add_argument("--sock", required=True)
+    _parser.add_argument("--task-id", required=True)
+    _args = _parser.parse_args()
+    main(Path(_args.sock), _args.task_id)

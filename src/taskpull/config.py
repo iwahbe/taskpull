@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from importlib.resources import files
 from pathlib import Path
 import tomllib
 
@@ -38,14 +37,6 @@ class Config:
     @property
     def log_file(self) -> Path:
         return self.user_dir / "daemon.log"
-
-    @property
-    def notify_script(self) -> Path:
-        return Path(str(files("taskpull").joinpath("notify.py")))
-
-    @property
-    def mcp_server_script(self) -> Path:
-        return Path(str(files("taskpull").joinpath("mcp_server.py")))
 
 
 def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:

@@ -15,11 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-def main() -> None:
-    if len(sys.argv) != 2:
-        sys.exit(0)
-
-    events_file = Path(sys.argv[1])
+def main(events_file: Path) -> None:
     events_file.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -78,4 +74,6 @@ def _extract_pr_number(text: str, pr_url: str | None) -> int | None:
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 2:
+        sys.exit(0)
+    main(Path(sys.argv[1]))

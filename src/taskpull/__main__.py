@@ -112,14 +112,37 @@ def main() -> None:
         help="User data directory (default: ~/.taskpull)",
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, metavar="{start,stop,status,list,refresh}"
+    )
     subparsers.add_parser("start", help="Start the daemon")
     subparsers.add_parser("stop", help="Stop the daemon")
     subparsers.add_parser("status", help="Show whether daemon is running")
     subparsers.add_parser("list", help="Show tasks and their states")
     subparsers.add_parser("refresh", help="Trigger an immediate poll cycle")
 
+    ft_parser = subparsers.add_parser("for-task", help=argparse.SUPPRESS)
+    ft_sub = ft_parser.add_subparsers(dest="for_task_command", required=True)
+
+    ft_sub.add_parser("notify").add_argument("events_file", type=Path)
+
+    mcp_parser = ft_sub.add_parser("mcp-server")
+    mcp_parser.add_argument("--sock", required=True, type=Path)
+    mcp_parser.add_argument("--task-id", required=True)
+
     args = parser.parse_args()
+
+    if args.command == "for-task":
+        if args.for_task_command == "notify":
+            from .notify import main as notify_main
+
+            notify_main(args.events_file)
+        elif args.for_task_command == "mcp-server":
+            from .mcp_server import main as mcp_server_main
+
+            mcp_server_main(args.sock, args.task_id)
+        return
+
     config = load_config(args.user_dir)
 
     commands = {

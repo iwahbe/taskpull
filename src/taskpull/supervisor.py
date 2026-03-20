@@ -353,8 +353,6 @@ async def _phase4_launch(
             wt,
             task_id,
             config.events_dir,
-            config.notify_script,
-            config.mcp_server_script,
             config.sock_file,
         )
 

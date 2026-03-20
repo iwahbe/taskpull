@@ -35,20 +35,22 @@ def write_hooks_config(
     worktree: Path,
     task_id: str,
     events_dir: Path,
-    notify_script: Path,
-    mcp_server_script: Path,
     sock_path: Path,
 ) -> None:
     events_file = (events_dir / f"{task_id}.jsonl").resolve()
+    notify_cmd = f"taskpull for-task notify {events_file}"
 
     config = {
         "mcpServers": {
             "taskpull": {
-                "command": "python3",
+                "command": "taskpull",
                 "args": [
-                    str(mcp_server_script),
-                    "--sock", str(sock_path),
-                    "--task-id", task_id,
+                    "for-task",
+                    "mcp-server",
+                    "--sock",
+                    str(sock_path),
+                    "--task-id",
+                    task_id,
                 ],
             },
         },
@@ -59,7 +61,7 @@ def write_hooks_config(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": f"python3 {notify_script} {events_file}",
+                            "command": notify_cmd,
                         }
                     ],
                 }
@@ -70,7 +72,7 @@ def write_hooks_config(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": f"python3 {notify_script} {events_file}",
+                            "command": notify_cmd,
                         }
                     ],
                 }
