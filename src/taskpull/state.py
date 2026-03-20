@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 import json
 import tempfile
+import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -22,7 +23,7 @@ class TaskState:
     worktree: str | None = None
     repo: str | None = None
     run_count: int = 0
-    exhausted: bool = False
+    exhaust_count: int = 0
     pr_draft: bool = False
     activity: str | None = None
     last_launched_at: int = 0
@@ -32,6 +33,17 @@ class TaskState:
         d["status"] = self.status.value
         return d
 
+    def exhaust_backoff(self, poll_interval: int) -> float:
+        if self.exhaust_count <= 0:
+            return 0
+        multiplier = min(2**self.exhaust_count, 24)
+        return multiplier * poll_interval
+
+    def seconds_since_launch(self) -> float:
+        if self.last_launched_at <= 0:
+            return float("inf")
+        return time.time() - self.last_launched_at
+
     @classmethod
     def from_dict(cls, d: dict) -> TaskState:
         d = dict(d)
@@ -39,6 +51,9 @@ class TaskState:
         if raw_status == "pr_open":
             raw_status = "active"
         d["status"] = TaskStatus(raw_status)
+        # Migrate legacy exhausted bool → exhaust_count.
+        if d.pop("exhausted", False) and "exhaust_count" not in d:
+            d["exhaust_count"] = 1
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in known})
 

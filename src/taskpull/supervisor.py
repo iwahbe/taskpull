@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import signal
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -158,7 +159,7 @@ async def run(config: Config) -> None:
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
-            ts.exhausted = True
+            ts.exhaust_count += 1
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("task_done received for %s", tid)
@@ -273,7 +274,8 @@ async def _phase2_check_prs(
             await _cleanup_task(ts, server)
             clear_events(config.events_dir, task_id)
 
-            if task.repeat and not ts.exhausted:
+            if task.repeat:
+                ts.exhaust_count = 0
                 _reset_task(ts)
             else:
                 ts.status = TaskStatus.DONE
@@ -342,13 +344,12 @@ async def _phase4_launch(
         ts = state[task_id]
         if ts.status in (TaskStatus.ACTIVE, TaskStatus.DONE):
             continue
-        if ts.exhausted:
+        backoff = ts.exhaust_backoff(config.poll_interval)
+        if backoff > 0 and ts.seconds_since_launch() < backoff:
             continue
         if task.lane_key in busy_lanes:
             continue
         lane_candidates.setdefault(task.lane_key, []).append((task_id, task, ts))
-
-    next_seq = max((ts.last_launched_at for ts in state.values()), default=0) + 1
 
     # For each free lane, pick the task launched least recently (round-robin).
     for lane_key, candidates in lane_candidates.items():
@@ -361,8 +362,7 @@ async def _phase4_launch(
                 continue
 
             ts.run_count += 1
-            ts.last_launched_at = next_seq
-            next_seq += 1
+            ts.last_launched_at = int(time.time())
             default_br = await default_branch(repo)
 
             log.info(
