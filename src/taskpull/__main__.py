@@ -100,10 +100,19 @@ def cmd_refresh(config):
     print("refresh triggered")
 
 
+class _HelpFormatter(argparse.HelpFormatter):
+    def _format_action(self, action: argparse.Action) -> str:
+        if isinstance(action, argparse._SubParsersAction._ChoicesPseudoAction):
+            if action.help == argparse.SUPPRESS:
+                return ""
+        return super()._format_action(action)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="taskpull",
         description="Pull-based multi-repo Claude Code task runner",
+        formatter_class=_HelpFormatter,
     )
     parser.add_argument(
         "--user-dir",

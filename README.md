@@ -1,5 +1,8 @@
 # taskpull
 
+> [!WARNING]
+> This project is in alpha and under active development. Expect breaking changes.
+
 Pull-based multi-repo Claude Code task runner. Ensures each configured repo always has one active Claude Code session working through a task list, visible in your Claude app via Remote Control.
 
 ## Requirements
@@ -9,10 +12,15 @@ Pull-based multi-repo Claude Code task runner. Ensures each configured repo alwa
 - `tmux`
 - `uv` (Python 3.12+)
 
+## Installing
+
+```bash
+uv tool install git+https://github.com/iwahbe/taskpull.git
+```
+
 ## Setup
 
-1. Clone this repo.
-2. Create `~/.taskpull/` with your config and tasks:
+1. Create `~/.taskpull/` with your config and tasks:
 
 ```
 ~/.taskpull/
@@ -24,7 +32,7 @@ Pull-based multi-repo Claude Code task runner. Ensures each configured repo alwa
 └── worktrees/      # git worktrees for active tasks
 ```
 
-3. Run `uv run python -m taskpull`.
+2. Run `taskpull start`.
 
 ## Task file format
 
@@ -41,10 +49,11 @@ Your prompt to Claude goes here. This is passed verbatim.
 
 ### Fields
 
-| Field    | Required | Description |
-|----------|----------|-------------|
-| `repo`   | yes      | Path to the local repo clone |
-| `repeat` | no       | `true` to re-run after each PR merge until `TASKPULL_DONE`. Default `false` |
+| Field       | Required | Description |
+|-------------|----------|-------------|
+| `repo`      | yes      | Path to the local repo clone |
+| `repeat`    | no       | `true` to re-run after each PR merge until `TASKPULL_DONE`. Default `false` |
+| `repo_lock` | no       | Concurrency key. Tasks with the same `repo` and `repo_lock` won't run simultaneously. Defaults to `repo` |
 
 Claude chooses its own branch name when creating a PR.
 
@@ -81,14 +90,23 @@ All sessions register with Remote Control. Open the Claude app (iOS, Android, or
 ## Commands
 
 ```bash
-# Run continuously
-uv run python -m taskpull
+# Start the daemon
+taskpull start
 
-# Run a single poll cycle (useful for testing)
-uv run python -m taskpull --once
+# Stop the daemon
+taskpull stop
+
+# Check whether the daemon is running
+taskpull status
+
+# Show tasks and their states
+taskpull list
+
+# Trigger an immediate poll cycle
+taskpull refresh
 
 # Use a different user directory
-uv run python -m taskpull --user-dir /path/to/dir
+taskpull --user-dir /path/to/dir start
 ```
 
 ## State
