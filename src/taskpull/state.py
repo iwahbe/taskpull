@@ -10,7 +10,6 @@ from pathlib import Path
 class TaskStatus(enum.Enum):
     IDLE = "idle"
     ACTIVE = "active"
-    PR_OPEN = "pr_open"
     DONE = "done"
 
 
@@ -34,7 +33,10 @@ class TaskState:
     @classmethod
     def from_dict(cls, d: dict) -> TaskState:
         d = dict(d)
-        d["status"] = TaskStatus(d.get("status", "idle"))
+        raw_status = d.get("status", "idle")
+        if raw_status == "pr_open":
+            raw_status = "active"
+        d["status"] = TaskStatus(raw_status)
         return cls(**d)
 
 

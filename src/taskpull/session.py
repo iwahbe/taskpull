@@ -39,6 +39,32 @@ def launch_session(
     return session.session_name  # type: ignore[return-value]
 
 
+def resume_session(
+    server: libtmux.Server,
+    name: str,
+    worktree: Path,
+    session_id: str,
+    run_count: int,
+    task_id: str,
+) -> str:
+    cmd = (
+        f"cd {worktree!s} && "
+        f"claude "
+        f"--resume {session_id} "
+        f"--remote-control "
+        f"--name '{task_id} (run {run_count})' "
+        f"--allowedTools 'Bash,Read,Write,Edit,mcp__taskpull__task_done'; "
+        f"sleep 5"
+    )
+
+    session = server.new_session(
+        session_name=name,
+        window_command=cmd,
+        attach=False,
+    )
+    return session.session_name  # type: ignore[return-value]
+
+
 def session_alive(server: libtmux.Server, name: str) -> bool:
     return any(s.session_name == name for s in server.sessions)
 

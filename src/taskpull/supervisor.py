@@ -28,7 +28,7 @@ from .worktree import (
     fetch_origin,
     resolve_repo,
 )
-from .session import kill_session, launch_session, session_alive
+from .session import kill_session, launch_session, resume_session, session_alive
 
 log = logging.getLogger(__name__)
 
@@ -221,7 +221,6 @@ def _phase1_process_events(
                 log.info("  %s: session_id=%s", task_id, event.session_id)
             elif isinstance(event, PrCreatedEvent):
                 ts.pr_number = event.pr_number
-                ts.status = TaskStatus.PR_OPEN
                 log.info(
                     "  %s: PR #%d created (%s)",
                     task_id,
@@ -249,7 +248,7 @@ async def _phase2_check_prs(
 ) -> None:
     log.info("Phase 2: Checking PRs")
     for task_id, ts in list(state.items()):
-        if ts.status != TaskStatus.PR_OPEN or ts.pr_number is None:
+        if ts.status != TaskStatus.ACTIVE or ts.pr_number is None:
             continue
 
         task = tasks.get(task_id)
@@ -290,33 +289,23 @@ async def _phase3_check_sessions(
         if ts.session_name and session_alive(server, ts.session_name):
             continue
 
-        log.info("  %s: session ended", task_id)
+        log.info("  %s: session gone, restoring", task_id)
 
-        if ts.pr_number is not None:
-            ts.status = TaskStatus.PR_OPEN
-            continue
-
-        # Check events one more time for any last-moment PR creation.
-        events = read_events(config.events_dir, task_id)
-        pr_event = next(
-            (e for e in events if isinstance(e, PrCreatedEvent)),
-            None,
-        )
-        if pr_event:
-            ts.pr_number = pr_event.pr_number
-            ts.status = TaskStatus.PR_OPEN
-            clear_events(config.events_dir, task_id)
-            log.info(
-                "  %s: late PR #%d detected",
+        if ts.session_id and ts.worktree and ts.session_name:
+            log.info("  %s: resuming session %s", task_id, ts.session_id)
+            resume_session(
+                server,
+                ts.session_name,
+                Path(ts.worktree),
+                ts.session_id,
+                ts.run_count,
                 task_id,
-                pr_event.pr_number,
             )
-            continue
-
-        log.info("  %s: no PR, resetting to idle", task_id)
-        await _cleanup_task(ts, server)
-        clear_events(config.events_dir, task_id)
-        _reset_task(ts)
+        else:
+            log.warning("  %s: no session_id to restore, resetting to idle", task_id)
+            await _cleanup_task(ts, server)
+            clear_events(config.events_dir, task_id)
+            _reset_task(ts)
 
 
 async def _phase4_launch(
@@ -329,7 +318,7 @@ async def _phase4_launch(
 
     busy_locks: set[tuple[str, str]] = set()
     for tid, ts in state.items():
-        if ts.status in (TaskStatus.ACTIVE, TaskStatus.PR_OPEN) and ts.repo:
+        if ts.status == TaskStatus.ACTIVE and ts.repo:
             task = tasks.get(tid)
             lock = task.repo_lock if task and task.repo_lock else ts.repo
             busy_locks.add((ts.repo, lock))
@@ -340,7 +329,7 @@ async def _phase4_launch(
             ts = TaskState()
             state[task_id] = ts
 
-        if ts.status in (TaskStatus.ACTIVE, TaskStatus.PR_OPEN, TaskStatus.DONE):
+        if ts.status in (TaskStatus.ACTIVE, TaskStatus.DONE):
             continue
         if ts.exhausted:
             continue

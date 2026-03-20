@@ -112,8 +112,10 @@ def cmd_list(config):
         repo = info.get("repo") or "-"
         runs = str(info.get("run_count", 0))
         status = info.get("status", "unknown")
-        if status == "pr_open" and info.get("pr_draft"):
+        if info.get("pr_number") and info.get("pr_draft"):
             status = "pr_draft"
+        elif info.get("pr_number"):
+            status = "pr_open"
         rows.append((task_id, status, pr, repo, runs))
 
     headers = ("TASK", "STATUS", "PR", "REPO", "RUNS")
