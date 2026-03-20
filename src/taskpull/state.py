@@ -25,6 +25,7 @@ class TaskState:
     exhausted: bool = False
     pr_draft: bool = False
     activity: str | None = None
+    last_launched_at: int = 0
 
     def to_dict(self) -> dict:
         d = asdict(self)

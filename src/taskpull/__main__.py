@@ -49,6 +49,26 @@ def cmd_stop(config):
     stop_daemon(config)
 
 
+def _task_status_label(info: dict) -> str:
+    state = info.get("state")
+    if not state:
+        return "pending"
+    status = state.get("status", "idle")
+    pr = state.get("pr_number")
+    if pr and state.get("pr_draft"):
+        return f"pr_draft (PR #{pr})"
+    if pr:
+        return f"pr_open (PR #{pr})"
+    if status == "active":
+        activity = state.get("activity")
+        if activity == "idle":
+            return "idle"
+        return "working"
+    if status == "done":
+        return "done"
+    return status
+
+
 def cmd_status(config):
     running, pid = is_daemon_running(config)
     if not running:
@@ -72,20 +92,47 @@ def cmd_status(config):
             print(f"  {task_id}: {msg}")
 
     if tasks:
+        # Group tasks by lane.
+        lanes: dict[tuple[str, str], list[tuple[str, dict]]] = {}
+        for task_id, info in tasks.items():
+            repo = info["repo"]
+            lock = info.get("repo_lock") or repo
+            lanes.setdefault((repo, lock), []).append((task_id, info))
+
+        # Sort tasks within each lane: active first, then by last_launched_at.
+        for lane_tasks in lanes.values():
+            lane_tasks.sort(
+                key=lambda t: (
+                    0 if t[1].get("state", {}).get("status") == "active" else 1,
+                    (t[1].get("state") or {}).get("last_launched_at", 0),
+                )
+            )
+
         print()
-        print(f"Tasks ({len(tasks)}):")
-        for task_id, info in sorted(tasks.items()):
-            parts = [info["repo"]]
-            if info.get("repeat"):
-                parts.append("repeat")
-            if info.get("repo_lock"):
-                parts.append(f"lock={info['repo_lock']}")
-            if not info.get("has_prompt"):
-                parts.append("NO PROMPT")
-            state = info.get("state")
-            if state:
-                parts.append(state["status"])
-            print(f"  {task_id}: {', '.join(parts)}")
+        print(f"Lanes ({len(lanes)}):")
+        for (repo, lock), lane_tasks in sorted(lanes.items()):
+            header = repo
+            if lock != repo:
+                header += f" [lock={lock}]"
+            print(f"  {header}:")
+
+            name_width = max(len(tid) for tid, _ in lane_tasks)
+            for task_id, info in lane_tasks:
+                state = info.get("state")
+                is_active = state and state.get("status") == "active"
+                marker = ">" if is_active else " "
+                label = _task_status_label(info)
+                runs = state.get("run_count", 0) if state else 0
+                extras = []
+                if info.get("repeat"):
+                    extras.append("repeat")
+                if not info.get("has_prompt"):
+                    extras.append("NO PROMPT")
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                print(
+                    f"    {marker} {task_id:<{name_width}}  {label} (run {runs}){suffix}"
+                )
+            print()
 
     if not errors and not tasks:
         print("\nNo tasks found.")

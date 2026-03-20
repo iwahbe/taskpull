@@ -324,68 +324,81 @@ async def _phase4_launch(
 ) -> None:
     log.info("Phase 4: Launching new work")
 
-    busy_locks: set[tuple[str, str]] = set()
+    busy_lanes: set[tuple[str, str]] = set()
     for tid, ts in state.items():
         if ts.status == TaskStatus.ACTIVE and ts.repo:
             task = tasks.get(tid)
-            lock = task.repo_lock if task and task.repo_lock else ts.repo
-            busy_locks.add((ts.repo, lock))
+            lane = task.lane_key if task else (ts.repo, ts.repo)
+            busy_lanes.add(lane)
 
+    # Ensure all tasks have state entries.
     for task_id, task in tasks.items():
-        ts = state.get(task_id)
-        if ts is None:
-            ts = TaskState()
-            state[task_id] = ts
+        if task_id not in state:
+            state[task_id] = TaskState()
 
+    # Group eligible tasks by lane.
+    lane_candidates: dict[tuple[str, str], list[tuple[str, TaskFile, TaskState]]] = {}
+    for task_id, task in tasks.items():
+        ts = state[task_id]
         if ts.status in (TaskStatus.ACTIVE, TaskStatus.DONE):
             continue
         if ts.exhausted:
             continue
-        lock = task.repo_lock if task.repo_lock else task.repo
-        if (task.repo, lock) in busy_locks:
+        if task.lane_key in busy_lanes:
             continue
+        lane_candidates.setdefault(task.lane_key, []).append((task_id, task, ts))
 
-        repo = resolve_repo(task.repo)
-        if not repo.exists():
-            log.warning("  %s: repo %s does not exist, skipping", task_id, repo)
-            continue
+    next_seq = max((ts.last_launched_at for ts in state.values()), default=0) + 1
 
-        ts.run_count += 1
-        default_br = await default_branch(repo)
+    # For each free lane, pick the task launched least recently (round-robin).
+    for lane_key, candidates in lane_candidates.items():
+        candidates.sort(key=lambda c: c[2].last_launched_at)
 
-        log.info(
-            "  %s: launching run %d on %s",
-            task_id,
-            ts.run_count,
-            repo,
-        )
+        for task_id, task, ts in candidates:
+            repo = resolve_repo(task.repo)
+            if not repo.exists():
+                log.warning("  %s: repo %s does not exist, skipping", task_id, repo)
+                continue
 
-        await fetch_origin(repo)
-        wt = await create_worktree(
-            config.worktrees_dir,
-            repo,
-            task_id,
-            ts.run_count,
-            f"origin/{default_br}",
-        )
+            ts.run_count += 1
+            ts.last_launched_at = next_seq
+            next_seq += 1
+            default_br = await default_branch(repo)
 
-        write_hooks_config(
-            wt,
-            task_id,
-            config.events_dir,
-            config.sock_file,
-        )
+            log.info(
+                "  %s: launching run %d on %s",
+                task_id,
+                ts.run_count,
+                repo,
+            )
 
-        prompt = _build_prompt(task)
-        session_name = f"taskpull-{task_id}"
-        launch_session(server, session_name, wt, prompt, ts.run_count, task_id)
+            await fetch_origin(repo)
+            wt = await create_worktree(
+                config.worktrees_dir,
+                repo,
+                task_id,
+                ts.run_count,
+                f"origin/{default_br}",
+            )
 
-        ts.status = TaskStatus.ACTIVE
-        ts.repo = task.repo
-        ts.worktree = str(wt)
-        ts.session_name = session_name
-        ts.session_id = None
-        ts.pr_number = None
-        ts.activity = "active"
+            write_hooks_config(
+                wt,
+                task_id,
+                config.events_dir,
+                config.sock_file,
+            )
 
-        busy_locks.add((task.repo, lock))
+            prompt = _build_prompt(task)
+            session_name = f"taskpull-{task_id}"
+            launch_session(server, session_name, wt, prompt, ts.run_count, task_id)
+
+            ts.status = TaskStatus.ACTIVE
+            ts.repo = task.repo
+            ts.worktree = str(wt)
+            ts.session_name = session_name
+            ts.session_id = None
+            ts.pr_number = None
+            ts.activity = "active"
+
+            busy_lanes.add(lane_key)
+            break

@@ -11,6 +11,10 @@ class TaskFile:
     prompt: str
     repo_lock: str | None = None
 
+    @property
+    def lane_key(self) -> tuple[str, str]:
+        return (self.repo, self.repo_lock if self.repo_lock else self.repo)
+
 
 def parse_task(path: Path) -> TaskFile:
     text = path.read_text()
