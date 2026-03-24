@@ -43,11 +43,11 @@ def write_hooks_config(
     task_id: str,
     events_dir: Path,
     sock_path: Path,
-) -> None:
+) -> Path:
     events_file = (events_dir / f"{task_id}.jsonl").resolve()
     notify_cmd = f"taskpull for-task notify {events_file}"
 
-    config = {
+    mcp_config = {
         "mcpServers": {
             "taskpull": {
                 "command": "taskpull",
@@ -61,6 +61,9 @@ def write_hooks_config(
                 ],
             },
         },
+    }
+
+    config = {
         "hooks": {
             "SessionStart": [
                 {
@@ -115,6 +118,13 @@ def write_hooks_config(
     with open(settings_path, "w") as f:
         json.dump(config, f, indent=2)
         f.write("\n")
+
+    mcp_path = claude_dir / "mcp.json"
+    with open(mcp_path, "w") as f:
+        json.dump(mcp_config, f, indent=2)
+        f.write("\n")
+
+    return mcp_path
 
 
 def read_events(events_dir: Path, task_id: str) -> list[Event]:

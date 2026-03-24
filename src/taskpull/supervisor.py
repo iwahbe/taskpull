@@ -305,13 +305,15 @@ async def _phase3_check_sessions(
 
         if ts.session_id and ts.worktree and ts.session_name:
             log.info("  %s: resuming session %s", task_id, ts.session_id)
+            wt = Path(ts.worktree)
             resume_session(
                 server,
                 ts.session_name,
-                Path(ts.worktree),
+                wt,
                 ts.session_id,
                 ts.run_count,
                 task_id,
+                wt / ".claude" / "mcp.json",
             )
         else:
             log.warning("  %s: no session_id to restore, resetting to idle", task_id)
@@ -383,7 +385,7 @@ async def _phase4_launch(
                 f"origin/{default_br}",
             )
 
-            write_hooks_config(
+            mcp_config = write_hooks_config(
                 wt,
                 task_id,
                 config.events_dir,
@@ -392,7 +394,9 @@ async def _phase4_launch(
 
             prompt = _build_prompt(task)
             session_name = f"taskpull-{task_id}"
-            launch_session(server, session_name, wt, prompt, ts.run_count, task_id)
+            launch_session(
+                server, session_name, wt, prompt, ts.run_count, task_id, mcp_config
+            )
 
             ts.status = TaskStatus.ACTIVE
             ts.repo = task.repo
