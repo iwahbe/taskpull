@@ -100,6 +100,7 @@ def _build_prompt(task: TaskFile) -> str:
 def _reset_task(ts: TaskState) -> None:
     ts.status = TaskStatus.IDLE
     ts.pr_number = None
+    ts.pr_url = None
     ts.pr_draft = False
     ts.worktree = None
     ts.session_id = None
@@ -225,6 +226,7 @@ def _phase1_process_events(
                 log.info("  %s: session_id=%s", task_id, event.session_id)
             elif isinstance(event, PrCreatedEvent):
                 ts.pr_number = event.pr_number
+                ts.pr_url = event.pr_url
                 log.info(
                     "  %s: PR #%d created (%s)",
                     task_id,
@@ -398,6 +400,7 @@ async def _phase4_launch(
             ts.session_name = session_name
             ts.session_id = None
             ts.pr_number = None
+            ts.pr_url = None
             ts.activity = "active"
 
             busy_lanes.add(lane_key)

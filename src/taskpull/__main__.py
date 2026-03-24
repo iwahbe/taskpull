@@ -160,7 +160,7 @@ def cmd_list(config):
 
     rows = []
     for task_id, info in sorted(tasks.items()):
-        pr = str(info.get("pr_number") or "-")
+        pr = info.get("pr_url") or "-"
         repo = info.get("repo") or "-"
         runs = str(info.get("run_count", 0))
         status = info.get("status", "unknown")
@@ -176,7 +176,7 @@ def cmd_list(config):
                 status = "working"
         rows.append((task_id, status, pr, repo, runs))
 
-    headers = ("TASK", "STATUS", "PR", "REPO", "RUNS")
+    headers = ("TASK", "STATUS", "PR", "DIR", "RUNS")
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     print(fmt.format(*headers))

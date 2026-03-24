@@ -27,7 +27,7 @@ def launch_session(
         f"claude "
         f"--remote-control "
         f"--name '{task_id} (run {run_count})' "
-        f"--allowedTools 'Bash,Read,Write,Edit,mcp__taskpull__task_done' "
+        f"--allowedTools 'Bash,Read,Write,Edit,Search,mcp__taskpull__task_done' "
         f"< {prompt_file!s}; "
         f"rm -f {prompt_file!s}; "
         f"sleep 5"
@@ -55,7 +55,7 @@ def resume_session(
         f"--resume {session_id} "
         f"--remote-control "
         f"--name '{task_id} (run {run_count})' "
-        f"--allowedTools 'Bash,Read,Write,Edit,mcp__taskpull__task_done'; "
+        f"--allowedTools 'Bash,Read,Write,Edit,Search,mcp__taskpull__task_done'; "
         f"sleep 5"
     )
 
