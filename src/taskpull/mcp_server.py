@@ -1,4 +1,4 @@
-"""MCP server exposing a task_done tool for Claude Code to signal task completion."""
+"""MCP server exposing a task_exhausted tool for Claude Code to signal there is no work to do."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 
-def _send_task_done(sock_path: Path, task_id: str) -> dict:
+def _send_task_exhausted(sock_path: Path, task_id: str) -> dict:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(10)
     try:
         sock.connect(str(sock_path))
-        payload = {"command": "task_done", "task_id": task_id}
+        payload = {"command": "task_exhausted", "task_id": task_id}
         sock.sendall(json.dumps(payload).encode() + b"\n")
         data = b""
         while True:
@@ -33,12 +33,20 @@ def main(sock_path: Path, task_id: str) -> None:
     mcp = FastMCP("taskpull")
 
     @mcp.tool()
-    def task_done() -> str:
-        """Signal that this repeating task has no more work to do."""
+    def task_exhausted() -> str:
+        """Signal that this task has no work to do because the task is already completed.
+
+        Call this ONLY when there is nothing to do — the work described by
+        the task has already been done or is otherwise unnecessary.  Do NOT
+        call this when you have finished working on a PR; just let the
+        session end normally in that case.
+
+        Calling this tool will terminate the current session.
+        """
         try:
-            response = _send_task_done(sock_path, task_id)
+            response = _send_task_exhausted(sock_path, task_id)
             if response.get("status") == "ok":
-                return "Task marked as done."
+                return "Task marked as exhausted. This session will be terminated."
             return f"Error: {response.get('message', 'unknown error')}"
         except Exception as e:
             return f"Failed to contact daemon: {e}"

@@ -43,7 +43,9 @@ When your work is ready, create a descriptively named branch, push it, and open 
 """
 
 REPEAT_SUFFIX = """
-If there is nothing left to do, call the task_done MCP tool and exit.
+If there is nothing left to do because the task is already completed, call
+the task_exhausted MCP tool.  Do NOT call task_exhausted when you have
+finished working on a PR — only call it when there is no work to do at all.
 """
 
 
@@ -155,15 +157,17 @@ async def run(config: Config) -> None:
                 },
                 "errors": result.errors,
             }
-        if command == "task_done":
+        if command == "task_exhausted":
             tid: str = request.get("task_id", "")
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
             ts.exhaust_count += 1
+            if ts.session_name:
+                kill_session(tmux_server, ts.session_name)
             save_state(config.state_file, current_state)
             refresh_event.set()
-            log.info("task_done received for %s", tid)
+            log.info("task_exhausted received for %s", tid)
             return {"status": "ok"}
         return {"status": "error", "message": f"unknown command: {command}"}
 
