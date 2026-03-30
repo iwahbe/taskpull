@@ -43,12 +43,15 @@ async def run_ipc_server(
     sock_path.unlink(missing_ok=True)
 
 
-def send_command(sock_path: Path, command: str, timeout: float = 10) -> dict[str, Any]:
+def send_command(
+    sock_path: Path, command: str, timeout: float = 10, **kwargs: Any
+) -> dict[str, Any]:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
         sock.connect(str(sock_path))
-        sock.sendall(json.dumps({"command": command}).encode() + b"\n")
+        payload = {"command": command, **kwargs}
+        sock.sendall(json.dumps(payload).encode() + b"\n")
         data = b""
         while True:
             chunk = sock.recv(4096)

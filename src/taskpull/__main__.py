@@ -25,7 +25,7 @@ def cmd_start(config):
 
     config.user_dir.mkdir(parents=True, exist_ok=True)
 
-    ready_fd = daemonize(config.log_file)
+    ready_fd = daemonize(config.log_file, config.pid_file)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -194,6 +194,19 @@ def cmd_refresh(config):
     print("refresh triggered")
 
 
+def cmd_restart(config, task_name):
+    _require_daemon(config)
+    try:
+        response = send_command(config.sock_file, "restart", task_id=task_name)
+    except (ConnectionRefusedError, FileNotFoundError):
+        print("could not connect to daemon")
+        sys.exit(1)
+    if response.get("status") != "ok":
+        print(f"error: {response.get('message', 'unknown error')}")
+        sys.exit(1)
+    print(f"task {task_name!r} restarted")
+
+
 class _HelpFormatter(argparse.HelpFormatter):
     def _format_action(self, action: argparse.Action) -> str:
         if isinstance(action, argparse._SubParsersAction._ChoicesPseudoAction):
@@ -216,13 +229,19 @@ def main() -> None:
     )
 
     subparsers = parser.add_subparsers(
-        dest="command", required=True, metavar="{start,stop,status,list,refresh}"
+        dest="command",
+        required=True,
+        metavar="{start,stop,status,list,refresh,restart}",
     )
     subparsers.add_parser("start", help="Start the daemon")
     subparsers.add_parser("stop", help="Stop the daemon")
     subparsers.add_parser("status", help="Show daemon status and validate tasks")
     subparsers.add_parser("list", help="Show tasks and their states")
     subparsers.add_parser("refresh", help="Trigger an immediate poll cycle")
+    restart_parser = subparsers.add_parser(
+        "restart", help="Kill a task's session and re-enqueue it"
+    )
+    restart_parser.add_argument("task_name", help="Name of the task to restart")
 
     ft_parser = subparsers.add_parser("for-task", help=argparse.SUPPRESS)
     ft_sub = ft_parser.add_subparsers(dest="for_task_command", required=True)
@@ -247,6 +266,10 @@ def main() -> None:
         return
 
     config = load_config(args.user_dir)
+
+    if args.command == "restart":
+        cmd_restart(config, args.task_name)
+        return
 
     commands = {
         "start": cmd_start,

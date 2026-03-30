@@ -10,11 +10,15 @@ from .config import Config
 from .ipc import send_command
 
 
-def read_pid(config: Config) -> int | None:
+def read_pid_file(pid_file: Path) -> int | None:
     try:
-        return int(config.pid_file.read_text().strip())
+        return int(pid_file.read_text().strip())
     except (FileNotFoundError, ValueError):
         return None
+
+
+def read_pid(config: Config) -> int | None:
+    return read_pid_file(config.pid_file)
 
 
 def is_daemon_running(config: Config) -> tuple[bool, int | None]:
@@ -36,7 +40,7 @@ def remove_pid(config: Config) -> None:
     config.pid_file.unlink(missing_ok=True)
 
 
-def daemonize(log_file: Path) -> int:
+def daemonize(log_file: Path, pid_file: Path) -> int:
     """Double-fork to daemonize.
 
     Returns a file descriptor that the daemon must write a byte to once it is
@@ -51,6 +55,9 @@ def daemonize(log_file: Path) -> int:
         # Block until the daemon writes a readiness byte or the pipe closes.
         data = os.read(read_fd, 1)
         os.close(read_fd)
+        if data:
+            pid = read_pid_file(pid_file)
+            print(f"daemon started (PID {pid})")
         sys.exit(0 if data else 1)
 
     os.setsid()

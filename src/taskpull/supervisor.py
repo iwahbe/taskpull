@@ -169,6 +169,18 @@ async def run(config: Config) -> None:
             refresh_event.set()
             log.info("task_exhausted received for %s", tid)
             return {"status": "ok"}
+        if command == "restart":
+            tid = request.get("task_id", "")
+            ts = current_state.get(tid)
+            if ts is None:
+                return {"status": "error", "message": f"unknown task: {tid}"}
+            await _cleanup_task(ts, tmux_server)
+            clear_events(config.events_dir, tid)
+            _reset_task(ts)
+            save_state(config.state_file, current_state)
+            refresh_event.set()
+            log.info("restart received for %s", tid)
+            return {"status": "ok"}
         return {"status": "error", "message": f"unknown command: {command}"}
 
     loop = asyncio.get_running_loop()
