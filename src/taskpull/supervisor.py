@@ -12,14 +12,7 @@ from typing import Any
 import libtmux
 
 from .config import Config
-from .hooks import (
-    ActivityEvent,
-    PrCreatedEvent,
-    SessionStartEvent,
-    clear_events,
-    read_events,
-    write_hooks_config,
-)
+from .hooks import write_hooks_config
 from .ipc import run_ipc_server
 from .state import TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_tasks
@@ -118,7 +111,6 @@ async def run(config: Config) -> None:
     log.info("Tasks dir: %s", config.tasks_dir)
     log.info("State file: %s", config.state_file)
 
-    config.events_dir.mkdir(parents=True, exist_ok=True)
     tmux_server = libtmux.Server()
 
     shutdown_event = asyncio.Event()
@@ -175,11 +167,26 @@ async def run(config: Config) -> None:
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
             await _cleanup_task(ts, tmux_server)
-            clear_events(config.events_dir, tid)
             _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("restart received for %s", tid)
+            return {"status": "ok"}
+        if command == "notify_event":
+            tid = request.get("task_id", "")
+            event = request.get("event", {})
+            ts = current_state.get(tid)
+            if ts is None:
+                return {"status": "error", "message": f"unknown task: {tid}"}
+            event_type = event.get("type")
+            if event_type == "session_start":
+                ts.session_id = event["session_id"]
+            elif event_type == "pr_created":
+                ts.pr_number = event["pr_number"]
+                ts.pr_url = event["pr_url"]
+            elif event_type == "activity":
+                ts.activity = event["activity"]
+            save_state(config.state_file, current_state)
             return {"status": "ok"}
         return {"status": "error", "message": f"unknown command: {command}"}
 
@@ -193,7 +200,7 @@ async def run(config: Config) -> None:
         loop.add_signal_handler(sig, _shutdown)
 
     ipc_task = asyncio.create_task(
-        run_ipc_server(config.sock_file, ipc_handler, shutdown_event),
+        run_ipc_server(config.ipc_port, ipc_handler, shutdown_event),
     )
 
     try:
@@ -203,9 +210,8 @@ async def run(config: Config) -> None:
             state = load_state(config.state_file)
             tasks = discover_tasks(config.tasks_dir)
 
-            _phase1_process_events(config, state)
-            await _phase2_check_prs(config, state, tasks, tmux_server)
-            await _phase3_check_sessions(config, state, tmux_server)
+            await _phase2_check_prs(state, tasks, tmux_server)
+            await _phase3_check_sessions(state, tmux_server)
             await _phase4_launch(config, state, tasks, tmux_server)
 
             save_state(config.state_file, state)
@@ -225,40 +231,6 @@ async def run(config: Config) -> None:
         log.info("taskpull stopped")
 
 
-def _phase1_process_events(
-    config: Config,
-    state: dict[str, TaskState],
-) -> None:
-    log.info("Phase 1: Processing events")
-    for task_id, ts in state.items():
-        if ts.status != TaskStatus.ACTIVE:
-            continue
-
-        events = read_events(config.events_dir, task_id)
-        last_activity: ActivityEvent | None = None
-        for event in events:
-            if isinstance(event, SessionStartEvent):
-                ts.session_id = event.session_id
-                log.info("  %s: session_id=%s", task_id, event.session_id)
-            elif isinstance(event, PrCreatedEvent):
-                ts.pr_number = event.pr_number
-                ts.pr_url = event.pr_url
-                log.info(
-                    "  %s: PR #%d created (%s)",
-                    task_id,
-                    event.pr_number,
-                    event.pr_url,
-                )
-            elif isinstance(event, ActivityEvent):
-                last_activity = event
-
-        if last_activity is not None:
-            ts.activity = last_activity.activity
-
-        if events:
-            clear_events(config.events_dir, task_id)
-
-
 async def _cleanup_task(ts: TaskState, server: libtmux.Server) -> None:
     if ts.worktree and ts.repo:
         repo = resolve_repo(ts.repo)
@@ -268,7 +240,6 @@ async def _cleanup_task(ts: TaskState, server: libtmux.Server) -> None:
 
 
 async def _phase2_check_prs(
-    config: Config,
     state: dict[str, TaskState],
     tasks: dict[str, TaskFile],
     server: libtmux.Server,
@@ -290,7 +261,6 @@ async def _phase2_check_prs(
         if pr_info.state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
             await _cleanup_task(ts, server)
-            clear_events(config.events_dir, task_id)
 
             if task.repeat:
                 ts.exhaust_count = 0
@@ -301,12 +271,10 @@ async def _phase2_check_prs(
         elif pr_info.state == "CLOSED":
             log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
             await _cleanup_task(ts, server)
-            clear_events(config.events_dir, task_id)
             _reset_task(ts)
 
 
 async def _phase3_check_sessions(
-    config: Config,
     state: dict[str, TaskState],
     server: libtmux.Server,
 ) -> None:
@@ -334,7 +302,6 @@ async def _phase3_check_sessions(
         else:
             log.warning("  %s: no session_id to restore, resetting to idle", task_id)
             await _cleanup_task(ts, server)
-            clear_events(config.events_dir, task_id)
             _reset_task(ts)
 
 
@@ -404,8 +371,7 @@ async def _phase4_launch(
             mcp_config = write_hooks_config(
                 wt,
                 task_id,
-                config.events_dir,
-                config.sock_file,
+                config.ipc_port,
             )
 
             prompt = _build_prompt(task)

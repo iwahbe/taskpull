@@ -21,7 +21,6 @@ def cmd_start(config):
 
     if pid is not None:
         remove_pid(config)
-    config.sock_file.unlink(missing_ok=True)
 
     config.user_dir.mkdir(parents=True, exist_ok=True)
 
@@ -42,7 +41,6 @@ def cmd_start(config):
         asyncio.run(run(config))
     finally:
         remove_pid(config)
-        config.sock_file.unlink(missing_ok=True)
 
 
 def cmd_stop(config):
@@ -77,8 +75,8 @@ def cmd_status(config):
     print(f"daemon is running (PID {pid})")
 
     try:
-        response = send_command(config.sock_file, "status")
-    except (ConnectionRefusedError, FileNotFoundError):
+        response = send_command("127.0.0.1", config.ipc_port, "status")
+    except ConnectionRefusedError:
         print("could not connect to daemon")
         sys.exit(1)
 
@@ -148,8 +146,8 @@ def _require_daemon(config):
 def cmd_list(config):
     _require_daemon(config)
     try:
-        response = send_command(config.sock_file, "list")
-    except (ConnectionRefusedError, FileNotFoundError):
+        response = send_command("127.0.0.1", config.ipc_port, "list")
+    except ConnectionRefusedError:
         print("daemon is not running (start with `taskpull start`)")
         sys.exit(1)
 
@@ -187,8 +185,8 @@ def cmd_list(config):
 def cmd_refresh(config):
     _require_daemon(config)
     try:
-        send_command(config.sock_file, "refresh")
-    except (ConnectionRefusedError, FileNotFoundError):
+        send_command("127.0.0.1", config.ipc_port, "refresh")
+    except ConnectionRefusedError:
         print("daemon is not running (start with `taskpull start`)")
         sys.exit(1)
     print("refresh triggered")
@@ -197,8 +195,10 @@ def cmd_refresh(config):
 def cmd_restart(config, task_name):
     _require_daemon(config)
     try:
-        response = send_command(config.sock_file, "restart", task_id=task_name)
-    except (ConnectionRefusedError, FileNotFoundError):
+        response = send_command(
+            "127.0.0.1", config.ipc_port, "restart", task_id=task_name
+        )
+    except ConnectionRefusedError:
         print("could not connect to daemon")
         sys.exit(1)
     if response.get("status") != "ok":
@@ -246,10 +246,14 @@ def main() -> None:
     ft_parser = subparsers.add_parser("for-task", help=argparse.SUPPRESS)
     ft_sub = ft_parser.add_subparsers(dest="for_task_command", required=True)
 
-    ft_sub.add_parser("notify").add_argument("events_file", type=Path)
+    notify_parser = ft_sub.add_parser("notify")
+    notify_parser.add_argument("--host", required=True)
+    notify_parser.add_argument("--port", required=True, type=int)
+    notify_parser.add_argument("--task-id", required=True)
 
     mcp_parser = ft_sub.add_parser("mcp-server")
-    mcp_parser.add_argument("--sock", required=True, type=Path)
+    mcp_parser.add_argument("--host", required=True)
+    mcp_parser.add_argument("--port", required=True, type=int)
     mcp_parser.add_argument("--task-id", required=True)
 
     args = parser.parse_args()
@@ -258,11 +262,11 @@ def main() -> None:
         if args.for_task_command == "notify":
             from .notify import main as notify_main
 
-            notify_main(args.events_file)
+            notify_main(args.host, args.port, args.task_id)
         elif args.for_task_command == "mcp-server":
             from .mcp_server import main as mcp_server_main
 
-            mcp_server_main(args.sock, args.task_id)
+            mcp_server_main(args.host, args.port, args.task_id)
         return
 
     config = load_config(args.user_dir)

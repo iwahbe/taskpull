@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import socket
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 log = logging.getLogger(__name__)
@@ -13,12 +12,10 @@ Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 async def run_ipc_server(
-    sock_path: Path,
+    port: int,
     handler: Handler,
     shutdown_event: asyncio.Event,
 ) -> None:
-    sock_path.unlink(missing_ok=True)
-
     async def _on_connect(
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
@@ -37,19 +34,18 @@ async def run_ipc_server(
             writer.close()
             await writer.wait_closed()
 
-    server = await asyncio.start_unix_server(_on_connect, path=str(sock_path))
+    server = await asyncio.start_server(_on_connect, "127.0.0.1", port)
     async with server:
         await shutdown_event.wait()
-    sock_path.unlink(missing_ok=True)
 
 
 def send_command(
-    sock_path: Path, command: str, timeout: float = 10, **kwargs: Any
+    host: str, port: int, command: str, timeout: float = 10, **kwargs: Any
 ) -> dict[str, Any]:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
-        sock.connect(str(sock_path))
+        sock.connect((host, port))
         payload = {"command": command, **kwargs}
         sock.sendall(json.dumps(payload).encode() + b"\n")
         data = b""

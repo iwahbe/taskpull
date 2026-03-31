@@ -8,6 +8,7 @@ _DEFAULT_DIR = Path.home() / ".taskpull"
 @dataclass(frozen=True)
 class Config:
     poll_interval: int = 300
+    ipc_port: int = 19471
     user_dir: Path = _DEFAULT_DIR
 
     @property
@@ -19,20 +20,12 @@ class Config:
         return self.user_dir / "state.json"
 
     @property
-    def events_dir(self) -> Path:
-        return self.user_dir / "events"
-
-    @property
     def worktrees_dir(self) -> Path:
         return self.user_dir / "worktrees"
 
     @property
     def pid_file(self) -> Path:
         return self.user_dir / "daemon.pid"
-
-    @property
-    def sock_file(self) -> Path:
-        return self.user_dir / "daemon.sock"
 
     @property
     def log_file(self) -> Path:
@@ -47,4 +40,6 @@ def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:
             data = tomllib.load(f)
         if "poll_interval" in data:
             kwargs["poll_interval"] = int(data["poll_interval"])
+        if "ipc_port" in data:
+            kwargs["ipc_port"] = int(data["ipc_port"])
     return Config(**kwargs)

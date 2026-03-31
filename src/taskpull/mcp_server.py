@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import json
 import socket
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 
-def _send_task_exhausted(sock_path: Path, task_id: str) -> dict:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+def _send_task_exhausted(host: str, port: int, task_id: str) -> dict:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
     try:
-        sock.connect(str(sock_path))
+        sock.connect((host, port))
         payload = {"command": "task_exhausted", "task_id": task_id}
         sock.sendall(json.dumps(payload).encode() + b"\n")
         data = b""
@@ -29,7 +28,7 @@ def _send_task_exhausted(sock_path: Path, task_id: str) -> dict:
         sock.close()
 
 
-def main(sock_path: Path, task_id: str) -> None:
+def main(host: str, port: int, task_id: str) -> None:
     mcp = FastMCP("taskpull")
 
     @mcp.tool()
@@ -44,7 +43,7 @@ def main(sock_path: Path, task_id: str) -> None:
         Calling this tool will terminate the current session.
         """
         try:
-            response = _send_task_exhausted(sock_path, task_id)
+            response = _send_task_exhausted(host, port, task_id)
             if response.get("status") == "ok":
                 return "Task marked as exhausted. This session will be terminated."
             return f"Error: {response.get('message', 'unknown error')}"
@@ -58,7 +57,8 @@ if __name__ == "__main__":
     import argparse as _argparse
 
     _parser = _argparse.ArgumentParser()
-    _parser.add_argument("--sock", required=True)
+    _parser.add_argument("--host", required=True)
+    _parser.add_argument("--port", required=True, type=int)
     _parser.add_argument("--task-id", required=True)
     _args = _parser.parse_args()
-    main(Path(_args.sock), _args.task_id)
+    main(_args.host, _args.port, _args.task_id)

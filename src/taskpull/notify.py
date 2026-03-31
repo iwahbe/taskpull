@@ -2,22 +2,39 @@
 """Hook script invoked by Claude Code to report events back to taskpull.
 
 Usage (configured in .claude/settings.local.json):
-    python3 /path/to/notify.py /path/to/events/task-id.jsonl
+    taskpull for-task notify --host 127.0.0.1 --port PORT --task-id TASK_ID
 
 Reads Claude Code hook JSON from stdin, extracts relevant events,
-and appends them as JSONL to the specified events file.
+and sends them to the daemon as notify_event IPC commands over TCP.
 """
 
 import json
 import re
+import socket
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 
-def main(events_file: Path) -> None:
-    events_file.parent.mkdir(parents=True, exist_ok=True)
+def _send_event(host: str, port: int, task_id: str, event: dict) -> None:
+    payload = {"command": "notify_event", "task_id": task_id, "event": event}
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(10)
+    try:
+        sock.connect((host, port))
+        sock.sendall(json.dumps(payload).encode() + b"\n")
+        data = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+            if b"\n" in data:
+                break
+    finally:
+        sock.close()
 
+
+def main(host: str, port: int, task_id: str) -> None:
     try:
         hook_input = json.load(sys.stdin)
     except (json.JSONDecodeError, EOFError):
@@ -69,8 +86,7 @@ def main(events_file: Path) -> None:
                 }
 
     if event is not None:
-        with open(events_file, "a") as f:
-            f.write(json.dumps(event) + "\n")
+        _send_event(host, port, task_id, event)
 
 
 def _extract_pr_url(text: str) -> str | None:
@@ -88,6 +104,11 @@ def _extract_pr_number(text: str, pr_url: str | None) -> int | None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit(0)
-    main(Path(sys.argv[1]))
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", required=True)
+    parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--task-id", required=True)
+    args = parser.parse_args()
+    main(args.host, args.port, args.task_id)

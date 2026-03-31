@@ -98,7 +98,7 @@ def stop_daemon(config: Config) -> None:
     # Verify this is actually our daemon by checking the socket, not just the PID
     # (the PID could have been reused by an unrelated process).
     try:
-        send_command(config.sock_file, "ping")
+        send_command("127.0.0.1", config.ipc_port, "ping")
     except (OSError, ValueError):
         remove_pid(config)
         print(f"removed stale PID file (PID {pid} is not the taskpull daemon)")
