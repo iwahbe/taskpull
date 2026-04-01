@@ -26,6 +26,7 @@ class TaskState:
     run_count: int = 0
     exhaust_count: int = 0
     pr_draft: bool = False
+    pr_approved: bool | None = None
     activity: str | None = None
     proxy_secret: str | None = None
     last_launched_at: int = 0

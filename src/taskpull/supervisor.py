@@ -46,6 +46,7 @@ finished working on a PR — only call it when there is no work to do at all.
 class PrInfo:
     state: str
     is_draft: bool
+    approved: bool | None
 
 
 async def _check_pr_state(repo_path: str, pr_number: int) -> PrInfo:
@@ -57,16 +58,25 @@ async def _check_pr_state(repo_path: str, pr_number: int) -> PrInfo:
         "--repo",
         repo_path,
         "--json",
-        "state,isDraft",
+        "state,isDraft,reviewDecision",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, _ = await proc.communicate()
     if proc.returncode != 0:
-        return PrInfo(state="UNKNOWN", is_draft=False)
+        return PrInfo(state="UNKNOWN", is_draft=False, approved=None)
     data = json.loads(stdout.decode())
+    review_decision = data.get("reviewDecision", "")
+    if review_decision == "APPROVED":
+        approved: bool | None = True
+    elif review_decision in ("CHANGES_REQUESTED", "REVIEW_REQUIRED"):
+        approved = False
+    else:
+        approved = None
     return PrInfo(
-        state=data.get("state", "UNKNOWN"), is_draft=data.get("isDraft", False)
+        state=data.get("state", "UNKNOWN"),
+        is_draft=data.get("isDraft", False),
+        approved=approved,
     )
 
 
@@ -109,6 +119,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.pr_number = None
     ts.pr_url = None
     ts.pr_draft = False
+    ts.pr_approved = None
     ts.workspace = None
     ts.session_id = None
     ts.session_name = None
@@ -156,6 +167,24 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     refresh_event = asyncio.Event()
 
     current_state: dict[str, TaskState] = load_state(config.state_file)
+
+    # Re-register proxy secrets for tasks that survived the daemon restart
+    # so that their containers can continue to use the GH proxy.
+    initial_tasks = discover_tasks(config.tasks_dir)
+    for task_id, ts in current_state.items():
+        if ts.status != TaskStatus.ACTIVE or not ts.proxy_secret:
+            continue
+        task = initial_tasks.get(task_id)
+        if task is None or ts.repo is None:
+            continue
+        try:
+            owner_repo = await _owner_repo_for_state(task, ts)
+        except Exception:
+            log.warning("  %s: cannot resolve owner/repo for proxy restore", task_id)
+            continue
+        if owner_repo:
+            gh_proxy.restore_task(ts.proxy_secret, owner_repo)
+            log.info("  %s: restored proxy mapping", task_id)
 
     async def ipc_handler(request: dict[str, Any]) -> dict[str, Any]:
         command = request.get("command")
@@ -312,6 +341,7 @@ async def _phase2_check_prs(
             continue
         pr_info = await _check_pr_state(remote_url, ts.pr_number)
         ts.pr_draft = pr_info.is_draft
+        ts.pr_approved = pr_info.approved
 
         if pr_info.state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
@@ -457,6 +487,7 @@ async def _phase4_launch(
             ts.session_id = None
             ts.pr_number = None
             ts.pr_url = None
+            ts.pr_approved = None
             ts.activity = "active"
             ts.proxy_secret = proxy_secret
 

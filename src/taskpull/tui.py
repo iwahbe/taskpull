@@ -65,7 +65,9 @@ def launch_tui(config: Config) -> None:
 
     tasks = _fetch_tasks(config.ipc_port)
 
-    sidebar_cmd = f"taskpull for-task tui-sidebar --port {config.ipc_port}"
+    sidebar_cmd = (
+        f"{sys.executable} -m taskpull for-task tui-sidebar --port {config.ipc_port}"
+    )
     right_cmd = _right_pane_cmd(tasks)
 
     _tmux("new-session", "-d", "-s", _SESSION_NAME, sidebar_cmd)
@@ -150,6 +152,42 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
     return "pending", 5
 
 
+def _pr_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
+    """Return extra lines to display under a task that has an open PR.
+
+    Each entry is (text, curses_color_pair).  Up to 2 lines:
+      1. PR URL
+      2. draft / approval status
+    """
+    pr_number = info.get("pr_number")
+    if not pr_number:
+        return []
+
+    lines: list[tuple[str, int]] = []
+
+    pr_url = info.get("pr_url")
+    if pr_url:
+        lines.append((f"     {pr_url}", 5))
+
+    tags: list[str] = []
+    pr_draft = info.get("pr_draft", False)
+    pr_approved = info.get("pr_approved")
+
+    if pr_draft:
+        tags.append("draft")
+    if pr_approved is True:
+        tags.append("approved")
+    elif pr_approved is False:
+        tags.append("not approved")
+
+    if tags:
+        tag_str = ", ".join(tags)
+        color = 4 if pr_draft else (2 if pr_approved else 5)
+        lines.append((f"     [{tag_str}]", color))
+
+    return lines
+
+
 def _draw_sidebar(
     stdscr: curses.window,
     task_list: list[tuple[str, dict[str, Any]]],
@@ -167,8 +205,9 @@ def _draw_sidebar(
     stdscr.addnstr(1, 0, "─" * usable_x, usable_x, curses.color_pair(5))
 
     # Task list
+    row = 3
     for i, (tid, info) in enumerate(task_list):
-        if i + 3 >= max_y - 2:
+        if row >= max_y - 2:
             break
 
         label, color = _status_label(info)
@@ -178,18 +217,27 @@ def _draw_sidebar(
         attr = curses.A_BOLD if i == selected else 0
 
         line = f" {marker} {tid}"
-        stdscr.addnstr(i + 3, 0, line, usable_x, attr | curses.color_pair(1))
+        stdscr.addnstr(row, 0, line, usable_x, attr | curses.color_pair(1))
 
         status_str = f" {label} (run {runs})"
         status_col = len(line)
         if status_col + len(status_str) < usable_x:
             stdscr.addnstr(
-                i + 3,
+                row,
                 status_col,
                 status_str,
                 usable_x - status_col,
                 curses.color_pair(color),
             )
+        row += 1
+
+        for detail_text, detail_color in _pr_detail_lines(info):
+            if row >= max_y - 2:
+                break
+            stdscr.addnstr(
+                row, 0, detail_text, usable_x, curses.color_pair(detail_color)
+            )
+            row += 1
 
     # Footer
     stdscr.addnstr(

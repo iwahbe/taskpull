@@ -165,15 +165,27 @@ def cmd_list(config):
             status = "pr_draft"
         elif info.get("pr_number"):
             status = "pr_open"
+        elif info.get("exhaust_count", 0) > 0:
+            status = "exhausted"
         elif status == "active":
             activity = info.get("activity")
             if activity == "idle":
                 status = "idle"
             elif activity == "active":
                 status = "working"
-        rows.append((task_id, status, pr, repo, runs))
 
-    headers = ("TASK", "STATUS", "PR", "DIR", "RUNS")
+        draft = "yes" if info.get("pr_draft") else "-"
+        pr_approved = info.get("pr_approved")
+        if pr_approved is True:
+            approved = "yes"
+        elif pr_approved is False:
+            approved = "no"
+        else:
+            approved = "-"
+
+        rows.append((task_id, status, pr, draft, approved, repo, runs))
+
+    headers = ("TASK", "STATUS", "PR", "DRAFT", "APPROVED", "DIR", "RUNS")
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     print(fmt.format(*headers))

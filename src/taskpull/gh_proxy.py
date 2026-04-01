@@ -141,6 +141,10 @@ class GHProxy:
         self._token_map[secret] = owner_repo
         return secret
 
+    def restore_task(self, secret: str, owner_repo: str) -> None:
+        """Re-register an existing proxy secret (e.g. after daemon restart)."""
+        self._token_map[secret] = owner_repo
+
     def unregister_task(self, secret: str) -> None:
         self._token_map.pop(secret, None)
 
