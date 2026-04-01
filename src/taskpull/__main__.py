@@ -229,7 +229,7 @@ def main() -> None:
 
     subparsers = parser.add_subparsers(
         dest="command",
-        required=True,
+        required=False,
         metavar="{start,stop,status,list,refresh,restart}",
     )
     subparsers.add_parser("start", help="Start the daemon")
@@ -255,6 +255,9 @@ def main() -> None:
     mcp_parser.add_argument("--port", required=True, type=int)
     mcp_parser.add_argument("--task-id", required=True)
 
+    sidebar_parser = ft_sub.add_parser("tui-sidebar")
+    sidebar_parser.add_argument("--port", required=True, type=int)
+
     args = parser.parse_args()
 
     if args.command == "for-task":
@@ -266,12 +269,22 @@ def main() -> None:
             from .mcp_server import main as mcp_server_main
 
             mcp_server_main(args.host, args.port, args.task_id)
+        elif args.for_task_command == "tui-sidebar":
+            from .tui import run_sidebar
+
+            run_sidebar(args.port)
         return
 
     config = load_config(args.user_dir)
 
     if args.command == "restart":
         cmd_restart(config, args.task_name)
+        return
+
+    if args.command is None:
+        from .tui import launch_tui
+
+        launch_tui(config)
         return
 
     commands = {

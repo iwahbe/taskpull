@@ -97,27 +97,60 @@ async def launch_session(
     for key, value in env.items():
         cmd.extend(["-e", f"{key}={value}"])
     cmd.append(docker_image)
-    cmd.extend(
-        [
-            "bash",
-            "-c",
-            (
-                "cd /workspace && "
-                'echo \'{"hasCompletedOnboarding":true,"lastOnboardingVersion":"9.9.9","theme":"dark","projects":{"/workspace":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}\' > ~/.claude.json && '
-                "claude "
-                "--dangerously-skip-permissions "
-                f"--settings '{_CLAUDE_SETTINGS}' "
-                # --remote-control doesn't work in Docker containers yet.
-                # See: https://github.com/anthropics/claude-code/issues/27848
-                "--remote-control "
-                f"--name '{task_id} (run {run_count})' "
-                f"--mcp-config /workspace/{mcp_config.relative_to(worktree)!s} "
-                f"< /workspace/{_PROMPT_FILENAME}; "
-                f"rm -f /workspace/{_PROMPT_FILENAME}; "
-                "sleep 5"
-            ),
-        ],
+    mcp_rel = mcp_config.relative_to(worktree)
+
+    # Write the Claude launch script and tmux config as files inside the
+    # container to avoid nested shell-quoting issues.
+    claude_script = (
+        "#!/bin/bash\n"
+        "claude "
+        "--dangerously-skip-permissions "
+        f"--settings '{_CLAUDE_SETTINGS}' "
+        # --remote-control doesn't work in Docker containers yet.
+        # See: https://github.com/anthropics/claude-code/issues/27848
+        "--remote-control "
+        f"--name '{task_id} (run {run_count})' "
+        f"--mcp-config /workspace/{mcp_rel!s} "
+        f"< /workspace/{_PROMPT_FILENAME}\n"
+        f"rm -f /workspace/{_PROMPT_FILENAME}\n"
     )
+    claude_script_path = worktree / ".taskpull-run.sh"
+    claude_script_path.write_text(claude_script)
+    claude_script_path.chmod(0o755)
+
+    tmux_conf = (
+        "set-option -g prefix None\n"
+        "unbind C-b\n"
+        "set-option -g status off\n"
+        "set-option -g remain-on-exit on\n"
+        "set-option -g detach-on-destroy off\n"
+    )
+    tmux_conf_path = worktree / ".taskpull-tmux.conf"
+    tmux_conf_path.write_text(tmux_conf)
+
+    claude_json = json.dumps(
+        {
+            "hasCompletedOnboarding": True,
+            "lastOnboardingVersion": "9.9.9",
+            "theme": "dark",
+            "projects": {
+                "/workspace": {
+                    "hasTrustDialogAccepted": True,
+                    "hasCompletedProjectOnboarding": True,
+                }
+            },
+        }
+    )
+
+    bash_script = (
+        "cd /workspace && "
+        f"echo '{claude_json}' > ~/.claude.json && "
+        "cp /workspace/.taskpull-tmux.conf ~/.tmux.conf && "
+        "tmux new-session -d -s claude /workspace/.taskpull-run.sh && "
+        "tail -f /dev/null"
+    )
+
+    cmd.extend(["bash", "-c", bash_script])
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
