@@ -21,7 +21,7 @@ class TaskState:
     session_name: str | None = None
     pr_number: int | None = None
     pr_url: str | None = None
-    worktree: str | None = None
+    workspace: str | None = None
     repo: str | None = None
     run_count: int = 0
     exhaust_count: int = 0
@@ -56,6 +56,11 @@ class TaskState:
         # Migrate legacy exhausted bool → exhaust_count.
         if d.pop("exhausted", False) and "exhaust_count" not in d:
             d["exhaust_count"] = 1
+        # Migrate legacy worktree → workspace.
+        if "worktree" in d and "workspace" not in d:
+            d["workspace"] = d.pop("worktree")
+        else:
+            d.pop("worktree", None)
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in d.items() if k in known})
 

@@ -17,12 +17,12 @@ from .ipc import run_ipc_server
 from .session import build_image, kill_session, launch_session, session_alive
 from .state import TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_tasks
-from .worktree import (
-    cleanup_worktree,
-    create_worktree,
-    default_branch,
-    fetch_origin,
-    resolve_repo,
+from .workspace import (
+    cleanup_workspace,
+    clone_repo,
+    is_repo_url,
+    repo_url_to_owner_repo,
+    resolve_local_path,
 )
 
 log = logging.getLogger(__name__)
@@ -85,6 +85,18 @@ async def _get_remote_url(repo_path: str) -> str:
     return stdout.decode().strip()
 
 
+def _owner_repo_for_task(task: TaskFile) -> str:
+    """Get 'owner/repo' string for a task.
+
+    For URL-based repos, parse directly from the URL.
+    For local paths, this cannot be determined without git — callers
+    should use _get_remote_url for those cases.
+    """
+    if is_repo_url(task.repo):
+        return repo_url_to_owner_repo(task.repo)
+    raise ValueError(f"cannot determine owner/repo for local path: {task.repo}")
+
+
 def _build_prompt(task: TaskFile) -> str:
     prompt = task.prompt + PR_INSTRUCTIONS
     if task.repeat:
@@ -97,7 +109,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.pr_number = None
     ts.pr_url = None
     ts.pr_draft = False
-    ts.worktree = None
+    ts.workspace = None
     ts.session_id = None
     ts.session_name = None
     ts.activity = None
@@ -265,11 +277,20 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
 async def _cleanup_task(ts: TaskState, gh_proxy: GHProxy | None = None) -> None:
     if ts.proxy_secret and gh_proxy:
         gh_proxy.unregister_task(ts.proxy_secret)
-    if ts.worktree and ts.repo:
-        repo = resolve_repo(ts.repo)
-        await cleanup_worktree(repo, Path(ts.worktree))
+    if ts.workspace and is_repo_url(ts.repo or ""):
+        await cleanup_workspace(Path(ts.workspace))
     if ts.session_name:
         await kill_session(ts.session_name)
+
+
+async def _owner_repo_for_state(task: TaskFile, ts: TaskState) -> str | None:
+    """Resolve owner/repo for PR checking."""
+    if is_repo_url(task.repo):
+        return repo_url_to_owner_repo(task.repo)
+    if ts.repo:
+        local = resolve_local_path(ts.repo)
+        return await _get_remote_url(str(local))
+    return None
 
 
 async def _phase2_check_prs(
@@ -286,8 +307,9 @@ async def _phase2_check_prs(
         if task is None or ts.repo is None:
             continue
 
-        repo = resolve_repo(ts.repo)
-        remote_url = await _get_remote_url(str(repo))
+        remote_url = await _owner_repo_for_state(task, ts)
+        if remote_url is None:
+            continue
         pr_info = await _check_pr_state(remote_url, ts.pr_number)
         ts.pr_draft = pr_info.is_draft
 
@@ -362,39 +384,48 @@ async def _phase4_launch(
         candidates.sort(key=lambda c: c[2].last_launched_at)
 
         for task_id, task, ts in candidates:
-            repo = resolve_repo(task.repo)
-            if not repo.exists():
-                log.warning("  %s: repo %s does not exist, skipping", task_id, repo)
-                continue
-
             ts.run_count += 1
             ts.last_launched_at = int(time.time())
-            default_br = await default_branch(repo)
 
-            log.info(
-                "  %s: launching run %d on %s",
-                task_id,
-                ts.run_count,
-                repo,
-            )
-
-            await fetch_origin(repo)
-            wt = await create_worktree(
-                config.worktrees_dir,
-                repo,
-                task_id,
-                ts.run_count,
-                f"origin/{default_br}",
-            )
+            if is_repo_url(task.repo):
+                log.info(
+                    "  %s: cloning %s (run %d)",
+                    task_id,
+                    task.repo,
+                    ts.run_count,
+                )
+                ws = await clone_repo(
+                    config.workspace_dir,
+                    task.repo,
+                    task_id,
+                    ts.run_count,
+                )
+                owner_repo = repo_url_to_owner_repo(task.repo)
+            else:
+                local = resolve_local_path(task.repo)
+                if not local.exists():
+                    log.warning(
+                        "  %s: path %s does not exist, skipping",
+                        task_id,
+                        local,
+                    )
+                    continue
+                log.info(
+                    "  %s: launching run %d on %s",
+                    task_id,
+                    ts.run_count,
+                    local,
+                )
+                ws = local
+                remote_url = await _get_remote_url(str(local))
+                owner_repo = parse_github_repo(remote_url)
 
             mcp_config = write_hooks_config(
-                wt,
+                ws,
                 task_id,
                 config.ipc_port,
             )
 
-            remote_url = await _get_remote_url(str(repo))
-            owner_repo = parse_github_repo(remote_url)
             proxy_secret = gh_proxy.register_task(owner_repo)
 
             prompt = _build_prompt(task)
@@ -409,7 +440,7 @@ async def _phase4_launch(
                 env["ANTHROPIC_BASE_URL"] = anthropic_base_url
             await launch_session(
                 session_name,
-                wt,
+                ws,
                 prompt,
                 ts.run_count,
                 task_id,
@@ -421,7 +452,7 @@ async def _phase4_launch(
 
             ts.status = TaskStatus.ACTIVE
             ts.repo = task.repo
-            ts.worktree = str(wt)
+            ts.workspace = str(ws)
             ts.session_name = session_name
             ts.session_id = None
             ts.pr_number = None

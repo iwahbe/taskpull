@@ -8,7 +8,7 @@ log = logging.getLogger(__name__)
 
 
 def write_hooks_config(
-    worktree: Path,
+    workspace: Path,
     task_id: str,
     ipc_port: int,
 ) -> Path:
@@ -84,7 +84,7 @@ def write_hooks_config(
         },
     }
 
-    claude_dir = worktree / ".claude"
+    claude_dir = workspace / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     settings_path = claude_dir / "settings.local.json"
     with open(settings_path, "w") as f:

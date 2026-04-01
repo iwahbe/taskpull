@@ -22,8 +22,8 @@ class Config:
         return self.user_dir / "state.json"
 
     @property
-    def worktrees_dir(self) -> Path:
-        return self.user_dir / "worktrees"
+    def workspace_dir(self) -> Path:
+        return self.user_dir / "workspace"
 
     @property
     def pid_file(self) -> Path:

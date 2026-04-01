@@ -70,7 +70,7 @@ _CLAUDE_SETTINGS = json.dumps(
 
 async def launch_session(
     name: str,
-    worktree: Path,
+    workspace: Path,
     prompt: str,
     run_count: int,
     task_id: str,
@@ -79,11 +79,11 @@ async def launch_session(
     env: dict[str, str],
     ca_cert: Path | None = None,
 ) -> str:
-    prompt_file = worktree / _PROMPT_FILENAME
+    prompt_file = workspace / _PROMPT_FILENAME
     prompt_file.write_text(prompt)
 
     if ca_cert:
-        shutil.copy2(str(ca_cert), worktree / ".taskpull-ca.pem")
+        shutil.copy2(str(ca_cert), workspace / ".taskpull-ca.pem")
 
     home = Path.home()
     cmd = [
@@ -94,14 +94,14 @@ async def launch_session(
         "--name",
         name,
         "-v",
-        f"{worktree}:/workspace",
+        f"{workspace}:/workspace",
         "-v",
         f"{home / '.claude'}:/home/worker/.claude",
     ]
     for key, value in env.items():
         cmd.extend(["-e", f"{key}={value}"])
     cmd.append(docker_image)
-    mcp_rel = mcp_config.relative_to(worktree)
+    mcp_rel = mcp_config.relative_to(workspace)
 
     # Write the Claude launch script and tmux config as files inside the
     # container to avoid nested shell-quoting issues.
@@ -118,7 +118,7 @@ async def launch_session(
         f"< /workspace/{_PROMPT_FILENAME}\n"
         f"rm -f /workspace/{_PROMPT_FILENAME}\n"
     )
-    claude_script_path = worktree / ".taskpull-run.sh"
+    claude_script_path = workspace / ".taskpull-run.sh"
     claude_script_path.write_text(claude_script)
     claude_script_path.chmod(0o755)
 
@@ -129,7 +129,7 @@ async def launch_session(
         "set-option -g remain-on-exit on\n"
         "set-option -g detach-on-destroy off\n"
     )
-    tmux_conf_path = worktree / ".taskpull-tmux.conf"
+    tmux_conf_path = workspace / ".taskpull-tmux.conf"
     tmux_conf_path.write_text(tmux_conf)
 
     claude_json = json.dumps(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .worktree import resolve_repo
+from .workspace import is_repo_url, resolve_local_path
 
 
 @dataclass(frozen=True)
@@ -90,9 +90,13 @@ def validate_tasks(tasks_dir: Path) -> ValidationResult:
         except ValueError as e:
             errors[task_id] = str(e)
             continue
-        repo = resolve_repo(task.repo)
-        if not repo.exists():
-            errors[task_id] = f"{path}: repo does not exist: {repo}"
-            continue
+        if is_repo_url(task.repo):
+            # URL repos are cloned at launch time; no local validation needed.
+            pass
+        else:
+            repo = resolve_local_path(task.repo)
+            if not repo.exists():
+                errors[task_id] = f"{path}: repo does not exist: {repo}"
+                continue
         tasks[task_id] = task
     return ValidationResult(tasks=tasks, errors=errors)
