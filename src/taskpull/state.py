@@ -27,6 +27,7 @@ class TaskState:
     exhaust_count: int = 0
     pr_draft: bool = False
     activity: str | None = None
+    proxy_secret: str | None = None
     last_launched_at: int = 0
 
     def to_dict(self) -> dict:

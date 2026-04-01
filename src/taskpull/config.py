@@ -9,6 +9,7 @@ _DEFAULT_DIR = Path.home() / ".taskpull"
 class Config:
     poll_interval: int = 300
     ipc_port: int = 19471
+    gh_proxy_port: int = 19472
     user_dir: Path = _DEFAULT_DIR
     docker_image: str = "taskpull-worker"
 
@@ -29,6 +30,10 @@ class Config:
         return self.user_dir / "daemon.pid"
 
     @property
+    def certs_dir(self) -> Path:
+        return self.user_dir / "certs"
+
+    @property
     def log_file(self) -> Path:
         return self.user_dir / "daemon.log"
 
@@ -45,4 +50,6 @@ def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:
             kwargs["ipc_port"] = int(data["ipc_port"])
         if "docker_image" in data:
             kwargs["docker_image"] = str(data["docker_image"])
+        if "gh_proxy_port" in data:
+            kwargs["gh_proxy_port"] = int(data["gh_proxy_port"])
     return Config(**kwargs)

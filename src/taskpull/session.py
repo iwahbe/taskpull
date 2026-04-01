@@ -77,9 +77,13 @@ async def launch_session(
     mcp_config: Path,
     docker_image: str,
     env: dict[str, str],
+    ca_cert: Path | None = None,
 ) -> str:
     prompt_file = worktree / _PROMPT_FILENAME
     prompt_file.write_text(prompt)
+
+    if ca_cert:
+        shutil.copy2(str(ca_cert), worktree / ".taskpull-ca.pem")
 
     home = Path.home()
     cmd = [
@@ -142,8 +146,18 @@ async def launch_session(
         }
     )
 
+    ssl_setup = ""
+    if ca_cert:
+        ssl_setup = (
+            "cat /etc/ssl/certs/ca-certificates.crt"
+            " /workspace/.taskpull-ca.pem"
+            " > /tmp/ca-bundle.pem && "
+            "export SSL_CERT_FILE=/tmp/ca-bundle.pem && "
+        )
+
     bash_script = (
         "cd /workspace && "
+        f"{ssl_setup}"
         f"echo '{claude_json}' > ~/.claude.json && "
         "cp /workspace/.taskpull-tmux.conf ~/.tmux.conf && "
         "tmux new-session -d -s claude /workspace/.taskpull-run.sh && "

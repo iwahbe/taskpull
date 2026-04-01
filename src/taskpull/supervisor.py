@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from .config import Config
+from .gh_proxy import GHProxy, generate_certs, parse_github_repo
 from .hooks import write_hooks_config
 from .ipc import run_ipc_server
 from .session import build_image, kill_session, launch_session, session_alive
@@ -100,6 +101,26 @@ def _reset_task(ts: TaskState) -> None:
     ts.session_id = None
     ts.session_name = None
     ts.activity = None
+    ts.proxy_secret = None
+
+
+async def _get_gh_token() -> str:
+    token = os.environ.get("GH_TOKEN")
+    if token:
+        return token
+    proc = await asyncio.create_subprocess_exec(
+        "gh",
+        "auth",
+        "token",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"gh auth token failed (rc={proc.returncode}): {stderr.decode().strip()}"
+        )
+    return stdout.decode().strip()
 
 
 async def run(config: Config, ready_fd: int, claude_token: str) -> None:
@@ -111,6 +132,10 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     log.info("State file: %s", config.state_file)
 
     await build_image(config.docker_image)
+
+    gh_token = await _get_gh_token()
+    ca_cert, _ca_key, server_cert, server_key = generate_certs(config.certs_dir)
+    gh_proxy = GHProxy(gh_token, ca_cert, server_cert, server_key)
 
     os.write(ready_fd, b"\x00")
     os.close(ready_fd)
@@ -168,7 +193,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
-            await _cleanup_task(ts)
+            await _cleanup_task(ts, gh_proxy)
             _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
@@ -204,6 +229,9 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     ipc_task = asyncio.create_task(
         run_ipc_server(config.ipc_port, ipc_handler, shutdown_event),
     )
+    proxy_task = asyncio.create_task(
+        gh_proxy.run(config.gh_proxy_port, shutdown_event),
+    )
 
     try:
         while not shutdown_event.is_set():
@@ -212,9 +240,9 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             state = load_state(config.state_file)
             tasks = discover_tasks(config.tasks_dir)
 
-            await _phase2_check_prs(state, tasks)
-            await _phase3_check_sessions(state)
-            await _phase4_launch(config, state, tasks, claude_token)
+            await _phase2_check_prs(state, tasks, gh_proxy)
+            await _phase3_check_sessions(state, gh_proxy)
+            await _phase4_launch(config, state, tasks, claude_token, gh_proxy)
 
             save_state(config.state_file, state)
             current_state.clear()
@@ -230,10 +258,13 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     finally:
         shutdown_event.set()
         await ipc_task
+        await proxy_task
         log.info("taskpull stopped")
 
 
-async def _cleanup_task(ts: TaskState) -> None:
+async def _cleanup_task(ts: TaskState, gh_proxy: GHProxy | None = None) -> None:
+    if ts.proxy_secret and gh_proxy:
+        gh_proxy.unregister_task(ts.proxy_secret)
     if ts.worktree and ts.repo:
         repo = resolve_repo(ts.repo)
         await cleanup_worktree(repo, Path(ts.worktree))
@@ -244,6 +275,7 @@ async def _cleanup_task(ts: TaskState) -> None:
 async def _phase2_check_prs(
     state: dict[str, TaskState],
     tasks: dict[str, TaskFile],
+    gh_proxy: GHProxy,
 ) -> None:
     log.info("Phase 2: Checking PRs")
     for task_id, ts in list(state.items()):
@@ -261,7 +293,7 @@ async def _phase2_check_prs(
 
         if pr_info.state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
-            await _cleanup_task(ts)
+            await _cleanup_task(ts, gh_proxy)
 
             if task.repeat:
                 ts.exhaust_count = 0
@@ -271,12 +303,13 @@ async def _phase2_check_prs(
 
         elif pr_info.state == "CLOSED":
             log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
-            await _cleanup_task(ts)
+            await _cleanup_task(ts, gh_proxy)
             _reset_task(ts)
 
 
 async def _phase3_check_sessions(
     state: dict[str, TaskState],
+    gh_proxy: GHProxy,
 ) -> None:
     log.info("Phase 3: Checking sessions")
     for task_id, ts in list(state.items()):
@@ -286,7 +319,7 @@ async def _phase3_check_sessions(
             continue
 
         log.info("  %s: session gone, resetting to idle", task_id)
-        await _cleanup_task(ts)
+        await _cleanup_task(ts, gh_proxy)
         _reset_task(ts)
 
 
@@ -295,6 +328,7 @@ async def _phase4_launch(
     state: dict[str, TaskState],
     tasks: dict[str, TaskFile],
     claude_token: str,
+    gh_proxy: GHProxy,
 ) -> None:
     log.info("Phase 4: Launching new work")
 
@@ -359,14 +393,17 @@ async def _phase4_launch(
                 config.ipc_port,
             )
 
+            remote_url = await _get_remote_url(str(repo))
+            owner_repo = parse_github_repo(remote_url)
+            proxy_secret = gh_proxy.register_task(owner_repo)
+
             prompt = _build_prompt(task)
             session_name = f"taskpull-{task_id}"
             env: dict[str, str] = {
                 "CLAUDE_CODE_OAUTH_TOKEN": claude_token,
+                "GH_HOST": f"host.docker.internal:{config.gh_proxy_port}",
+                "GH_TOKEN": proxy_secret,
             }
-            gh_token = os.environ.get("GH_TOKEN")
-            if gh_token:
-                env["GH_TOKEN"] = gh_token
             anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
             if anthropic_base_url:
                 env["ANTHROPIC_BASE_URL"] = anthropic_base_url
@@ -379,6 +416,7 @@ async def _phase4_launch(
                 mcp_config,
                 config.docker_image,
                 env,
+                gh_proxy.ca_cert_path,
             )
 
             ts.status = TaskStatus.ACTIVE
@@ -389,6 +427,7 @@ async def _phase4_launch(
             ts.pr_number = None
             ts.pr_url = None
             ts.activity = "active"
+            ts.proxy_secret = proxy_secret
 
             busy_lanes.add(lane_key)
             break
