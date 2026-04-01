@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
 from .config import load_config
+from .credentials import get_claude_token
 from .daemon import daemonize, is_daemon_running, remove_pid, stop_daemon, write_pid
 from .ipc import send_command
 from .supervisor import run
@@ -24,6 +24,8 @@ def cmd_start(config):
 
     config.user_dir.mkdir(parents=True, exist_ok=True)
 
+    claude_token = get_claude_token()
+
     ready_fd = daemonize(config.log_file, config.pid_file)
 
     logging.basicConfig(
@@ -34,11 +36,8 @@ def cmd_start(config):
 
     write_pid(config)
 
-    os.write(ready_fd, b"\x00")
-    os.close(ready_fd)
-
     try:
-        asyncio.run(run(config))
+        asyncio.run(run(config, ready_fd, claude_token))
     finally:
         remove_pid(config)
 
@@ -101,7 +100,7 @@ def cmd_status(config):
         for lane_tasks in lanes.values():
             lane_tasks.sort(
                 key=lambda t: (
-                    0 if t[1].get("state", {}).get("status") == "active" else 1,
+                    0 if (t[1].get("state") or {}).get("status") == "active" else 1,
                     (t[1].get("state") or {}).get("last_launched_at", 0),
                 )
             )

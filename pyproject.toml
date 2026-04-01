@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Pull-based multi-repo Claude Code task runner"
 requires-python = ">=3.12"
 dependencies = [
-    "libtmux>=0.40",
+    "keyring>=25.0",
     "mcp>=1.0",
 ]
 

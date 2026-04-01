@@ -13,7 +13,7 @@ def write_hooks_config(
     ipc_port: int,
 ) -> Path:
     notify_cmd = (
-        f"taskpull for-task notify --host 127.0.0.1 --port {ipc_port}"
+        f"taskpull for-task notify --host host.docker.internal --port {ipc_port}"
         f" --task-id {task_id}"
     )
 
@@ -25,7 +25,7 @@ def write_hooks_config(
                     "for-task",
                     "mcp-server",
                     "--host",
-                    "127.0.0.1",
+                    "host.docker.internal",
                     "--port",
                     str(ipc_port),
                     "--task-id",

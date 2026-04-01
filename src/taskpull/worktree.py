@@ -55,6 +55,10 @@ async def create_worktree(
 ) -> Path:
     wt = worktrees_dir / task_id / str(run_count)
     wt.parent.mkdir(parents=True, exist_ok=True)
+    if wt.exists():
+        log.warning("worktree %s already exists, removing stale directory", wt)
+        await cleanup_worktree(repo, wt)
+    await _run("git", "worktree", "prune", cwd=repo)
     await _run(
         "git",
         "worktree",

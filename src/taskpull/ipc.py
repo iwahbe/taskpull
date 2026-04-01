@@ -34,7 +34,7 @@ async def run_ipc_server(
             writer.close()
             await writer.wait_closed()
 
-    server = await asyncio.start_server(_on_connect, "127.0.0.1", port)
+    server = await asyncio.start_server(_on_connect, "0.0.0.0", port)
     async with server:
         await shutdown_event.wait()
 

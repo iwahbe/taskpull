@@ -7,13 +7,13 @@ import signal
 import time
 from dataclasses import dataclass
 from pathlib import Path
+import os
 from typing import Any
-
-import libtmux
 
 from .config import Config
 from .hooks import write_hooks_config
 from .ipc import run_ipc_server
+from .session import build_image, kill_session, launch_session, session_alive
 from .state import TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_tasks
 from .worktree import (
@@ -23,7 +23,6 @@ from .worktree import (
     fetch_origin,
     resolve_repo,
 )
-from .session import kill_session, launch_session, resume_session, session_alive
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +102,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.activity = None
 
 
-async def run(config: Config) -> None:
+async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     log.info(
         "taskpull starting (poll_interval=%ds)",
         config.poll_interval,
@@ -111,7 +110,10 @@ async def run(config: Config) -> None:
     log.info("Tasks dir: %s", config.tasks_dir)
     log.info("State file: %s", config.state_file)
 
-    tmux_server = libtmux.Server()
+    await build_image(config.docker_image)
+
+    os.write(ready_fd, b"\x00")
+    os.close(ready_fd)
 
     shutdown_event = asyncio.Event()
     refresh_event = asyncio.Event()
@@ -156,7 +158,7 @@ async def run(config: Config) -> None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
             ts.exhaust_count += 1
             if ts.session_name:
-                kill_session(tmux_server, ts.session_name)
+                await kill_session(ts.session_name)
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("task_exhausted received for %s", tid)
@@ -166,7 +168,7 @@ async def run(config: Config) -> None:
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
-            await _cleanup_task(ts, tmux_server)
+            await _cleanup_task(ts)
             _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
@@ -210,9 +212,9 @@ async def run(config: Config) -> None:
             state = load_state(config.state_file)
             tasks = discover_tasks(config.tasks_dir)
 
-            await _phase2_check_prs(state, tasks, tmux_server)
-            await _phase3_check_sessions(state, tmux_server)
-            await _phase4_launch(config, state, tasks, tmux_server)
+            await _phase2_check_prs(state, tasks)
+            await _phase3_check_sessions(state)
+            await _phase4_launch(config, state, tasks, claude_token)
 
             save_state(config.state_file, state)
             current_state.clear()
@@ -231,18 +233,17 @@ async def run(config: Config) -> None:
         log.info("taskpull stopped")
 
 
-async def _cleanup_task(ts: TaskState, server: libtmux.Server) -> None:
+async def _cleanup_task(ts: TaskState) -> None:
     if ts.worktree and ts.repo:
         repo = resolve_repo(ts.repo)
         await cleanup_worktree(repo, Path(ts.worktree))
     if ts.session_name:
-        kill_session(server, ts.session_name)
+        await kill_session(ts.session_name)
 
 
 async def _phase2_check_prs(
     state: dict[str, TaskState],
     tasks: dict[str, TaskFile],
-    server: libtmux.Server,
 ) -> None:
     log.info("Phase 2: Checking PRs")
     for task_id, ts in list(state.items()):
@@ -260,7 +261,7 @@ async def _phase2_check_prs(
 
         if pr_info.state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
-            await _cleanup_task(ts, server)
+            await _cleanup_task(ts)
 
             if task.repeat:
                 ts.exhaust_count = 0
@@ -270,46 +271,30 @@ async def _phase2_check_prs(
 
         elif pr_info.state == "CLOSED":
             log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
-            await _cleanup_task(ts, server)
+            await _cleanup_task(ts)
             _reset_task(ts)
 
 
 async def _phase3_check_sessions(
     state: dict[str, TaskState],
-    server: libtmux.Server,
 ) -> None:
     log.info("Phase 3: Checking sessions")
     for task_id, ts in list(state.items()):
         if ts.status != TaskStatus.ACTIVE:
             continue
-        if ts.session_name and session_alive(server, ts.session_name):
+        if ts.session_name and await session_alive(ts.session_name):
             continue
 
-        log.info("  %s: session gone, restoring", task_id)
-
-        if ts.session_id and ts.worktree and ts.session_name:
-            log.info("  %s: resuming session %s", task_id, ts.session_id)
-            wt = Path(ts.worktree)
-            resume_session(
-                server,
-                ts.session_name,
-                wt,
-                ts.session_id,
-                ts.run_count,
-                task_id,
-                wt / ".claude" / "mcp.json",
-            )
-        else:
-            log.warning("  %s: no session_id to restore, resetting to idle", task_id)
-            await _cleanup_task(ts, server)
-            _reset_task(ts)
+        log.info("  %s: session gone, resetting to idle", task_id)
+        await _cleanup_task(ts)
+        _reset_task(ts)
 
 
 async def _phase4_launch(
     config: Config,
     state: dict[str, TaskState],
     tasks: dict[str, TaskFile],
-    server: libtmux.Server,
+    claude_token: str,
 ) -> None:
     log.info("Phase 4: Launching new work")
 
@@ -376,8 +361,24 @@ async def _phase4_launch(
 
             prompt = _build_prompt(task)
             session_name = f"taskpull-{task_id}"
-            launch_session(
-                server, session_name, wt, prompt, ts.run_count, task_id, mcp_config
+            env: dict[str, str] = {
+                "CLAUDE_CODE_OAUTH_TOKEN": claude_token,
+            }
+            gh_token = os.environ.get("GH_TOKEN")
+            if gh_token:
+                env["GH_TOKEN"] = gh_token
+            anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+            if anthropic_base_url:
+                env["ANTHROPIC_BASE_URL"] = anthropic_base_url
+            await launch_session(
+                session_name,
+                wt,
+                prompt,
+                ts.run_count,
+                task_id,
+                mcp_config,
+                config.docker_image,
+                env,
             )
 
             ts.status = TaskStatus.ACTIVE

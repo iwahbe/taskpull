@@ -10,6 +10,7 @@ class Config:
     poll_interval: int = 300
     ipc_port: int = 19471
     user_dir: Path = _DEFAULT_DIR
+    docker_image: str = "taskpull-worker"
 
     @property
     def tasks_dir(self) -> Path:
@@ -42,4 +43,6 @@ def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:
             kwargs["poll_interval"] = int(data["poll_interval"])
         if "ipc_port" in data:
             kwargs["ipc_port"] = int(data["ipc_port"])
+        if "docker_image" in data:
+            kwargs["docker_image"] = str(data["docker_image"])
     return Config(**kwargs)
