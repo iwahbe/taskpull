@@ -155,7 +155,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     shutdown_event = asyncio.Event()
     refresh_event = asyncio.Event()
 
-    current_state: dict[str, TaskState] = {}
+    current_state: dict[str, TaskState] = load_state(config.state_file)
 
     async def ipc_handler(request: dict[str, Any]) -> dict[str, Any]:
         command = request.get("command")

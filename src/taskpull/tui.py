@@ -89,6 +89,7 @@ def launch_tui(config: Config) -> None:
         ("prefix2", "None"),
     ]:
         _tmux("set-option", "-t", _SESSION_NAME, option, value)
+    _tmux("set-option", "-w", "-t", f"{_SESSION_NAME}:0", "remain-on-exit", "on")
     # Option+h/l to switch between sidebar and session pane.
     # Option+j/k to change task selection from either pane.
     _tmux("bind-key", "-n", "M-h", "select-pane", "-t", f"{_SESSION_NAME}:0.0")
@@ -144,6 +145,8 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
         if activity == "idle":
             return "idle", 5
         return "working", 2
+    if info.get("exhaust_count", 0) > 0:
+        return "exhausted", 5
     return "pending", 5
 
 
@@ -228,7 +231,10 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
 
     while True:
         tasks = _fetch_tasks(ipc_port)
-        task_list = sorted(tasks.items())
+        task_list = sorted(
+            tasks.items(),
+            key=lambda item: (item[1].get("exhaust_count", 0) > 0, item[0]),
+        )
 
         if selected >= len(task_list):
             selected = max(0, len(task_list) - 1)
@@ -270,3 +276,4 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
                     send_command("127.0.0.1", ipc_port, "restart", task_id=tid)
                 except (ConnectionRefusedError, OSError):
                     pass
+                prev_selected = -1

@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
+# Install mise (into /usr/local/bin so it's available to all users)
+RUN curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
+
 # Install GitHub CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \

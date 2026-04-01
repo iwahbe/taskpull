@@ -107,6 +107,7 @@ async def launch_session(
     # container to avoid nested shell-quoting issues.
     claude_script = (
         "#!/bin/bash\n"
+        'eval "$(mise activate bash)"\n'
         "claude "
         "--dangerously-skip-permissions "
         f"--settings '{_CLAUDE_SETTINGS}' "
@@ -155,9 +156,16 @@ async def launch_session(
             "export SSL_CERT_FILE=/tmp/ca-bundle.pem && "
         )
 
+    mise_setup = (
+        "if [ -f .mise.toml ] || [ -f mise.toml ] || [ -f .tool-versions ]; then "
+        "mise install --yes; "
+        "fi && "
+    )
+
     bash_script = (
         "cd /workspace && "
         f"{ssl_setup}"
+        f"{mise_setup}"
         f"echo '{claude_json}' > ~/.claude.json && "
         "cp /workspace/.taskpull-tmux.conf ~/.tmux.conf && "
         "tmux new-session -d -s claude /workspace/.taskpull-run.sh && "
