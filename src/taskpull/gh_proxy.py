@@ -194,7 +194,10 @@ class GHProxy:
         method, path, headers, body = parsed
 
         proxy_token = self._extract_token(headers)
-        allowed_repo = self._token_map.get(proxy_token) if proxy_token else None
+        if proxy_token is None:
+            await self._send_error(writer, 403, "Invalid proxy token")
+            return
+        allowed_repo = self._token_map.get(proxy_token)
         if allowed_repo is None:
             await self._send_error(writer, 403, "Invalid proxy token")
             return
@@ -392,15 +395,13 @@ class GHProxy:
         path: str,
         status_code: int,
         body: bytes,
-        proxy_token: str | None,
+        proxy_token: str,
     ) -> None:
         if self._on_pr_created is None:
             return
         if method != "POST" or status_code != 201:
             return
         if not re.match(r"/repos/[^/]+/[^/]+/pulls$", path):
-            return
-        if proxy_token is None:
             return
         task_id = self._task_map.get(proxy_token)
         if not task_id:

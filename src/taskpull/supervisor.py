@@ -264,6 +264,46 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             refresh_event.set()
             log.info("restart received for %s", tid)
             return {"status": "ok"}
+        if command == "pause":
+            tid = request.get("task_id", "")
+            ts = current_state.get(tid)
+            if ts is None:
+                return {"status": "error", "message": f"unknown task: {tid}"}
+            if ts.status in (
+                TaskStatus.DONE,
+                TaskStatus.BROKEN,
+                TaskStatus.PAUSED,
+            ):
+                return {
+                    "status": "error",
+                    "message": f"cannot pause task in state {ts.status.value}",
+                }
+            if ts.status == TaskStatus.ACTIVE and ts.session_name:
+                await pause_session(ts.session_name)
+            ts.status = TaskStatus.PAUSED
+            save_state(config.state_file, current_state)
+            refresh_event.set()
+            log.info("pause received for %s", tid)
+            return {"status": "ok"}
+        if command == "resume":
+            tid = request.get("task_id", "")
+            ts = current_state.get(tid)
+            if ts is None:
+                return {"status": "error", "message": f"unknown task: {tid}"}
+            if ts.status != TaskStatus.PAUSED:
+                return {
+                    "status": "error",
+                    "message": f"cannot resume task in state {ts.status.value}",
+                }
+            if ts.session_name:
+                await unpause_session(ts.session_name)
+                ts.status = TaskStatus.ACTIVE
+            else:
+                ts.status = TaskStatus.IDLE
+            save_state(config.state_file, current_state)
+            refresh_event.set()
+            log.info("resume received for %s", tid)
+            return {"status": "ok"}
         if command == "notify_event":
             tid = request.get("task_id", "")
             event = request.get("event", {})
@@ -469,7 +509,12 @@ async def _phase4_launch(
     lane_candidates: dict[tuple[str, str], list[tuple[str, TaskFile, TaskState]]] = {}
     for task_id, task in tasks.items():
         ts = state[task_id]
-        if ts.status in (TaskStatus.ACTIVE, TaskStatus.DONE, TaskStatus.BROKEN):
+        if ts.status in (
+            TaskStatus.ACTIVE,
+            TaskStatus.PAUSED,
+            TaskStatus.DONE,
+            TaskStatus.BROKEN,
+        ):
             continue
         backoff = ts.exhaust_backoff(config.poll_interval)
         if backoff > 0 and ts.seconds_since_launch() < backoff:

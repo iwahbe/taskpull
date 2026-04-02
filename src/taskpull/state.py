@@ -11,6 +11,7 @@ from pathlib import Path
 class TaskStatus(enum.Enum):
     IDLE = "idle"
     ACTIVE = "active"
+    PAUSED = "paused"
     DONE = "done"
     BROKEN = "broken"
 

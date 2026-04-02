@@ -124,6 +124,8 @@ def _sync_right_pane(info: dict[str, Any]) -> None:
     if info.get("status") == "broken":
         error = info.get("error_message") or "unknown error"
         cmd = f"echo {shlex.quote(error)}; read"
+    elif info.get("status") == "paused":
+        cmd = "echo 'Task is paused (r to resume)'; read"
     elif info.get("status") == "active" and session_name:
         cmd = _attach_cmd(session_name)
     else:
@@ -144,6 +146,8 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
         return "broken", 6
     if status == "done":
         return "done", 3
+    if status == "paused":
+        return "paused", 4
     if pr and pr_draft:
         return f"PR #{pr} (draft)", 4
     if pr:
@@ -249,7 +253,7 @@ def _draw_sidebar(
     stdscr.addnstr(
         max_y - 1,
         0,
-        " ⌥ j/k:sel  ⌥ h/l:pane  R:restart  q:quit",
+        " ⌥ j/k:sel  ⌥ h/l:pane  p:pause  r:resume  R:restart  q:quit",
         usable_x,
         curses.color_pair(5),
     )
@@ -327,7 +331,22 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
             selected = max(selected - 1, 0)
 
         elif key == ord("r"):
-            pass  # next iteration will refresh
+            if task_list:
+                tid, _info = task_list[selected]
+                try:
+                    send_command("127.0.0.1", ipc_port, "resume", task_id=tid)
+                except (ConnectionRefusedError, OSError):
+                    pass
+                prev_selected = -1
+
+        elif key == ord("p"):
+            if task_list:
+                tid, _info = task_list[selected]
+                try:
+                    send_command("127.0.0.1", ipc_port, "pause", task_id=tid)
+                except (ConnectionRefusedError, OSError):
+                    pass
+                prev_selected = -1
 
         elif key == ord("R"):
             if task_list:
