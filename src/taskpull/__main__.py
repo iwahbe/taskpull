@@ -64,6 +64,8 @@ def _task_status_label(info: dict[str, Any]) -> str:
         activity = state.get("activity")
         if activity == "idle":
             return "idle"
+        if activity == "initializing":
+            return "initializing"
         return "working"
     if status == "done":
         return "done"

@@ -36,6 +36,7 @@ class FakeBackend:
     claude_exited_sessions: dict[str, bool] = field(default_factory=dict)
     exit_info: dict[str, tuple[int | None, str]] = field(default_factory=dict)
     paused_sessions: dict[str, bool] = field(default_factory=dict)
+    pane_output: dict[str, str] = field(default_factory=dict)
 
     async def build_image(self, image_name: str) -> None:
         pass
@@ -89,6 +90,9 @@ class FakeBackend:
 
     async def session_paused(self, name: str) -> bool:
         return self.paused_sessions.get(name, False)
+
+    async def session_pane_output(self, name: str, lines: int = 50) -> str:
+        return self.pane_output.get(name, "")
 
 
 def _make_gh_proxy(tmp_path: Path) -> GHProxy:
@@ -201,13 +205,36 @@ class TestPhase3CheckSessions:
         gh_proxy = _make_gh_proxy(tmp_path)
         state = {
             "task-a": TaskState(
-                status=TaskStatus.ACTIVE, session_name="taskpull-task-a"
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                session_id="sess-123",
             ),
         }
 
         await _phase3_check_sessions(state, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.IDLE
+        assert backend.killed == ["taskpull-task-a"]
+
+    @pytest.mark.asyncio
+    async def test_init_failure_marks_broken(self, tmp_path: Path):
+        backend = FakeBackend()
+        backend.alive_sessions["taskpull-task-a"] = True
+        backend.claude_exited_sessions["taskpull-task-a"] = True
+        backend.pane_output["taskpull-task-a"] = "mise install failed"
+        gh_proxy = _make_gh_proxy(tmp_path)
+        state = {
+            "task-a": TaskState(
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                session_id=None,
+            ),
+        }
+
+        await _phase3_check_sessions(state, gh_proxy, backend)
+
+        assert state["task-a"].status == TaskStatus.BROKEN
+        assert state["task-a"].error_message == "mise install failed"
         assert backend.killed == ["taskpull-task-a"]
 
     @pytest.mark.asyncio

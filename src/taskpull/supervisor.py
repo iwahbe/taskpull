@@ -349,16 +349,15 @@ async def run(
         while not shutdown_event.is_set():
             log.info("--- Poll cycle ---")
 
-            state = load_state(config.state_file)
             tasks = discover_tasks(config.tasks_dir)
 
-            await _phase2_check_prs(state, tasks, gh_proxy, backend)
-            await _phase3_check_sessions(state, gh_proxy, backend)
-            await _phase4_launch(config, state, tasks, claude_token, gh_proxy, backend)
+            await _phase2_check_prs(current_state, tasks, gh_proxy, backend)
+            await _phase3_check_sessions(current_state, gh_proxy, backend)
+            await _phase4_launch(
+                config, current_state, tasks, claude_token, gh_proxy, backend
+            )
 
-            save_state(config.state_file, state)
-            current_state.clear()
-            current_state.update(state)
+            save_state(config.state_file, current_state)
 
             refresh_event.clear()
             try:
@@ -458,9 +457,17 @@ async def _phase3_check_sessions(
             continue
         if ts.session_name and await backend.session_alive(ts.session_name):
             if await backend.session_claude_exited(ts.session_name):
-                log.info("  %s: claude exited, resetting to idle", task_id)
-                await _cleanup_task(ts, gh_proxy, backend)
-                _reset_task(ts)
+                if ts.session_id is None:
+                    error_output = await backend.session_pane_output(ts.session_name)
+                    log.info("  %s: initialization failed, marking broken", task_id)
+                    await _cleanup_task(ts, gh_proxy, backend)
+                    _reset_task(ts)
+                    ts.status = TaskStatus.BROKEN
+                    ts.error_message = error_output
+                else:
+                    log.info("  %s: claude exited, resetting to idle", task_id)
+                    await _cleanup_task(ts, gh_proxy, backend)
+                    _reset_task(ts)
             continue
 
         # Container is dead. Capture exit info before cleanup removes it.
@@ -605,7 +612,7 @@ async def _phase4_launch(
             ts.pr_number = None
             ts.pr_url = None
             ts.pr_approved = None
-            ts.activity = "active"
+            ts.activity = "initializing"
             ts.proxy_secret = proxy_secret
 
             busy_lanes.add(lane_key)

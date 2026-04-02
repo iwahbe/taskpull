@@ -49,6 +49,8 @@ class SessionBackend(Protocol):
 
     async def session_paused(self, name: str) -> bool: ...
 
+    async def session_pane_output(self, name: str, lines: int = 50) -> str: ...
+
 
 async def build_image(image_name: str) -> None:
     """Build the worker Docker image from the bundled Dockerfile and wheel."""
@@ -154,8 +156,13 @@ async def launch_session(
     # container to avoid nested shell-quoting issues.
     claude_script = (
         "#!/bin/bash\n"
+        "set -e\n"
+        "cd /workspace\n"
+        "if ! mise install --yes --dry-run-code; then\n"
+        "  mise install --yes\n"
+        "fi\n"
         'eval "$(mise activate bash)"\n'
-        "claude "
+        "exec claude "
         "--dangerously-skip-permissions "
         f"--settings '{_CLAUDE_SETTINGS}' "
         # --remote-control doesn't work in Docker containers yet.
@@ -164,7 +171,6 @@ async def launch_session(
         f"--name '{task_id} (run {run_count})' "
         f"--mcp-config /workspace/{mcp_rel!s} "
         f"< /workspace/{_PROMPT_FILENAME}\n"
-        f"rm -f /workspace/{_PROMPT_FILENAME}\n"
     )
     claude_script_path = workspace / ".taskpull-run.sh"
     claude_script_path.write_text(claude_script)
@@ -213,16 +219,9 @@ async def launch_session(
                 "sleep 0.1; done; } && "
             )
 
-    mise_setup = (
-        "if [ -f .mise.toml ] || [ -f mise.toml ] || [ -f .tool-versions ]; then "
-        "mise install --yes; "
-        "fi && "
-    )
-
     bash_script = (
         "cd /workspace && "
         f"{proxy_setup}"
-        f"{mise_setup}"
         f"echo '{claude_json}' > ~/.claude.json && "
         "cp /workspace/.taskpull-tmux.conf ~/.tmux.conf && "
         "tmux new-session -d -s claude /workspace/.taskpull-run.sh && "
@@ -369,6 +368,27 @@ async def session_claude_exited(name: str) -> bool:
     return stdout.decode().strip() == "1"
 
 
+async def session_pane_output(name: str, lines: int = 50) -> str:
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "exec",
+        name,
+        "tmux",
+        "capture-pane",
+        "-t",
+        "claude",
+        "-p",
+        "-S",
+        f"-{lines}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    if proc.returncode != 0:
+        return ""
+    return stdout.decode(errors="replace").strip()
+
+
 class DockerBackend:
     async def build_image(self, image_name: str) -> None:
         await build_image(image_name)
@@ -419,3 +439,6 @@ class DockerBackend:
 
     async def session_paused(self, name: str) -> bool:
         return await session_paused(name)
+
+    async def session_pane_output(self, name: str, lines: int = 50) -> str:
+        return await session_pane_output(name, lines)

@@ -160,6 +160,8 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
         activity = info.get("activity")
         if activity == "idle":
             return "idle", 5
+        if activity == "initializing":
+            return "initializing", 4
         return "working", 2
     if info.get("exhaust_count", 0) > 0:
         return "exhausted", 5
