@@ -99,6 +99,10 @@ def launch_tui(config: Config) -> None:
     _tmux("bind-key", "-n", "M-l", "select-pane", "-t", f"{_SESSION_NAME}:0.1")
     _tmux("bind-key", "-n", "M-j", "send-keys", "-t", f"{_SESSION_NAME}:0.0", "j")
     _tmux("bind-key", "-n", "M-k", "send-keys", "-t", f"{_SESSION_NAME}:0.0", "k")
+    # Disable tmux copy-mode on mouse drag so the terminal handles selection
+    # natively (allows normal copy to clipboard).
+    _tmux("unbind-key", "-T", "copy-mode", "MouseDrag1Pane")
+    _tmux("unbind-key", "-T", "copy-mode-vi", "MouseDrag1Pane")
 
     # Ensure cleanup on exit.
     prev_sigterm = signal.getsignal(signal.SIGTERM)

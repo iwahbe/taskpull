@@ -580,6 +580,9 @@ async def _phase4_launch(
                 "CLAUDE_CODE_OAUTH_TOKEN": claude_token,
                 "GH_HOST": f"host.docker.internal:{config.gh_proxy_port}",
                 "GH_TOKEN": proxy_secret,
+                "GH_ENTERPRISE_TOKEN": proxy_secret,
+                "GITHUB_TOKEN": proxy_secret,
+                "MISE_VERBOSE": "1",
             }
             anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
             if anthropic_base_url:

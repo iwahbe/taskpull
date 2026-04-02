@@ -117,6 +117,27 @@ async def launch_session(
     if ca_cert:
         shutil.copy2(str(ca_cert), workspace / ".taskpull-ca.pem")
 
+    gh_host = env.get("GH_HOST", "")
+    if gh_host:
+        mise_settings = (
+            "[settings]\n"
+            "github_attestations = false\n"
+            "slsa = false\n"
+            "\n"
+            "[settings.aqua]\n"
+            "github_attestations = false\n"
+            "cosign = false\n"
+            "slsa = false\n"
+            "\n"
+            "[settings.github]\n"
+            "github_attestations = false\n"
+            "slsa = false\n"
+            "\n"
+            "[settings.url_replacements]\n"
+            f'"https://api.github.com" = "https://{gh_host}"\n'
+        )
+        (workspace / ".taskpull-mise-config.toml").write_text(mise_settings)
+
     home = Path.home()
     cmd = [
         "docker",
@@ -161,6 +182,9 @@ async def launch_session(
         "set-option -g status off\n"
         "set-option -g remain-on-exit on\n"
         "set-option -g detach-on-destroy off\n"
+        "set-option -g mouse on\n"
+        "unbind-key -T copy-mode MouseDrag1Pane\n"
+        "unbind-key -T copy-mode-vi MouseDrag1Pane\n"
     )
     tmux_conf_path = workspace / ".taskpull-tmux.conf"
     tmux_conf_path.write_text(tmux_conf)
@@ -190,6 +214,8 @@ async def launch_session(
 
     mise_setup = (
         "if [ -f .mise.toml ] || [ -f mise.toml ] || [ -f .tool-versions ]; then "
+        "mkdir -p ~/.config/mise && "
+        "cp /workspace/.taskpull-mise-config.toml ~/.config/mise/config.toml && "
         "mise install --yes; "
         "fi && "
     )
