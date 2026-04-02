@@ -248,3 +248,65 @@ async def session_paused(name: str) -> bool:
     )
     stdout, _ = await proc.communicate()
     return stdout.decode().strip() == "true"
+
+
+async def session_exit_info(name: str) -> tuple[int | None, str]:
+    """Get exit code and recent logs from a stopped container.
+
+    Must be called before ``kill_session`` (which does ``docker rm -f``).
+    Returns ``(None, "")`` if the container has already been removed.
+    """
+    code_proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "inspect",
+        "--format",
+        "{{.State.ExitCode}}",
+        name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    code_out, _ = await code_proc.communicate()
+    if code_proc.returncode != 0:
+        return None, ""
+
+    try:
+        exit_code = int(code_out.decode().strip())
+    except ValueError:
+        return None, ""
+
+    log_proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "logs",
+        "--tail",
+        "50",
+        name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    log_out, _ = await log_proc.communicate()
+    return exit_code, log_out.decode(errors="replace").strip()
+
+
+async def session_claude_exited(name: str) -> bool:
+    """Check if the Claude process inside a *running* container has exited.
+
+    The container stays alive via ``tail -f /dev/null``, but the tmux pane
+    running Claude is marked dead (``remain-on-exit on``) once Claude exits.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "exec",
+        name,
+        "tmux",
+        "list-panes",
+        "-t",
+        "claude",
+        "-F",
+        "#{pane_dead}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    if proc.returncode != 0:
+        return False
+    return stdout.decode().strip() == "1"

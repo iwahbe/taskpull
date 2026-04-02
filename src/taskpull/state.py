@@ -12,6 +12,7 @@ class TaskStatus(enum.Enum):
     IDLE = "idle"
     ACTIVE = "active"
     DONE = "done"
+    BROKEN = "broken"
 
 
 @dataclass
@@ -30,6 +31,7 @@ class TaskState:
     activity: str | None = None
     proxy_secret: str | None = None
     last_launched_at: int = 0
+    error_message: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)

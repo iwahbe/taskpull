@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import curses
+import shlex
 import signal
 import shutil
 import subprocess
@@ -120,7 +121,10 @@ def launch_tui(config: Config) -> None:
 
 def _sync_right_pane(info: dict[str, Any]) -> None:
     session_name = info.get("session_name")
-    if info.get("status") == "active" and session_name:
+    if info.get("status") == "broken":
+        error = info.get("error_message") or "unknown error"
+        cmd = f"echo {shlex.quote(error)}; read"
+    elif info.get("status") == "active" and session_name:
         cmd = _attach_cmd(session_name)
     else:
         cmd = "echo 'Task is not active'; read"
@@ -136,6 +140,8 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
     pr = info.get("pr_number")
     pr_draft = info.get("pr_draft", False)
 
+    if status == "broken":
+        return "broken", 6
     if status == "done":
         return "done", 3
     if pr and pr_draft:
@@ -259,12 +265,14 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
     curses.curs_set(0)
     curses.use_default_colors()
 
-    # Color pairs: 1=header, 2=green(active), 3=blue(done), 4=yellow(draft), 5=dim
+    # Color pairs: 1=header, 2=green(active), 3=blue(done), 4=yellow(draft),
+    # 5=dim, 6=red(broken)
     curses.init_pair(1, curses.COLOR_WHITE, -1)
     curses.init_pair(2, curses.COLOR_GREEN, -1)
     curses.init_pair(3, curses.COLOR_BLUE, -1)
     curses.init_pair(4, curses.COLOR_YELLOW, -1)
     curses.init_pair(5, curses.COLOR_WHITE, -1)
+    curses.init_pair(6, curses.COLOR_RED, -1)
 
     curses.halfdelay(20)  # 2 second timeout for getch
 
@@ -281,7 +289,11 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
         tasks = _fetch_tasks(ipc_port)
         task_list = sorted(
             tasks.items(),
-            key=lambda item: (item[1].get("exhaust_count", 0) > 0, item[0]),
+            key=lambda item: (
+                item[1].get("status") == "broken"
+                or item[1].get("exhaust_count", 0) > 0,
+                item[0],
+            ),
         )
 
         if selected >= len(task_list):

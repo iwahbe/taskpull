@@ -51,6 +51,8 @@ def _task_status_label(info: dict) -> str:
     if not state:
         return "pending"
     status = state.get("status", "idle")
+    if status == "broken":
+        return "broken"
     pr = state.get("pr_number")
     if pr and state.get("pr_draft"):
         return f"pr_draft (PR #{pr})"
@@ -129,6 +131,11 @@ def cmd_status(config):
                 print(
                     f"    {marker} {task_id:<{name_width}}  {label} (run {runs}){suffix}"
                 )
+                if state and state.get("status") == "broken":
+                    error = state.get("error_message", "")
+                    if error:
+                        for line in error.splitlines()[-10:]:
+                            print(f"      {line}")
             print()
 
     if not errors and not tasks:

@@ -20,6 +20,8 @@ from .session import (
     launch_session,
     pause_session,
     session_alive,
+    session_claude_exited,
+    session_exit_info,
     session_paused,
     unpause_session,
 )
@@ -133,6 +135,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.session_name = None
     ts.activity = None
     ts.proxy_secret = None
+    ts.error_message = None
 
 
 async def _get_gh_token() -> str:
@@ -231,8 +234,8 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
             ts.exhaust_count += 1
-            if ts.session_name:
-                await kill_session(ts.session_name)
+            await _cleanup_task(ts, gh_proxy)
+            _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("task_exhausted received for %s", tid)
@@ -403,11 +406,32 @@ async def _phase3_check_sessions(
         if ts.status != TaskStatus.ACTIVE:
             continue
         if ts.session_name and await session_alive(ts.session_name):
+            if await session_claude_exited(ts.session_name):
+                log.info("  %s: claude exited, resetting to idle", task_id)
+                await _cleanup_task(ts, gh_proxy)
+                _reset_task(ts)
             continue
 
-        log.info("  %s: session gone, resetting to idle", task_id)
+        # Container is dead. Capture exit info before cleanup removes it.
+        if ts.session_name:
+            exit_code, error_output = await session_exit_info(ts.session_name)
+        else:
+            exit_code, error_output = None, ""
+
         await _cleanup_task(ts, gh_proxy)
-        _reset_task(ts)
+
+        if exit_code is not None and exit_code != 0:
+            log.info(
+                "  %s: session exited with code %d, marking broken",
+                task_id,
+                exit_code,
+            )
+            _reset_task(ts)
+            ts.status = TaskStatus.BROKEN
+            ts.error_message = error_output
+        else:
+            log.info("  %s: session gone, resetting to idle", task_id)
+            _reset_task(ts)
 
 
 async def _phase4_launch(
@@ -435,7 +459,7 @@ async def _phase4_launch(
     lane_candidates: dict[tuple[str, str], list[tuple[str, TaskFile, TaskState]]] = {}
     for task_id, task in tasks.items():
         ts = state[task_id]
-        if ts.status in (TaskStatus.ACTIVE, TaskStatus.DONE):
+        if ts.status in (TaskStatus.ACTIVE, TaskStatus.DONE, TaskStatus.BROKEN):
             continue
         backoff = ts.exhaust_backoff(config.poll_interval)
         if backoff > 0 and ts.seconds_since_launch() < backoff:
