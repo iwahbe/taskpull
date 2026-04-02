@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 import tomllib
 
 _DEFAULT_DIR = Path.home() / ".taskpull"
@@ -40,7 +41,7 @@ class Config:
 
 def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:
     config_file = user_dir / "config.toml"
-    kwargs: dict = {"user_dir": user_dir}
+    kwargs: dict[str, Any] = {"user_dir": user_dir}
     if config_file.exists():
         with open(config_file, "rb") as f:
             data = tomllib.load(f)

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import socket
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 
-def _send_task_exhausted(host: str, port: int, task_id: str) -> dict:
+def _send_task_exhausted(host: str, port: int, task_id: str) -> dict[str, Any]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
     try:

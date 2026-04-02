@@ -6,6 +6,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from typing import Any
 
 
 class TaskStatus(enum.Enum):
@@ -34,7 +35,7 @@ class TaskState:
     last_launched_at: int = 0
     error_message: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["status"] = self.status.value
         return d
@@ -51,7 +52,7 @@ class TaskState:
         return time.time() - self.last_launched_at
 
     @classmethod
-    def from_dict(cls, d: dict) -> TaskState:
+    def from_dict(cls, d: dict[str, Any]) -> TaskState:
         d = dict(d)
         raw_status = d.get("status", "idle")
         if raw_status == "pr_open":

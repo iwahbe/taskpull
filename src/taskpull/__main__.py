@@ -5,6 +5,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from .config import load_config
 from .credentials import get_claude_token
@@ -46,7 +47,7 @@ def cmd_stop(config):
     stop_daemon(config)
 
 
-def _task_status_label(info: dict) -> str:
+def _task_status_label(info: dict[str, Any]) -> str:
     state = info.get("state")
     if not state:
         return "pending"

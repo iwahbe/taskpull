@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 
 
-def _send_event(host: str, port: int, task_id: str, event: dict) -> None:
+def _send_event(host: str, port: int, task_id: str, event: dict[str, str]) -> None:
     payload = {"command": "notify_event", "task_id": task_id, "event": event}
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(10)
