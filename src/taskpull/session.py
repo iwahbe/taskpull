@@ -212,3 +212,39 @@ async def kill_session(name: str) -> None:
         stderr=asyncio.subprocess.PIPE,
     )
     await proc.communicate()
+
+
+async def pause_session(name: str) -> None:
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "pause",
+        name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate()
+
+
+async def unpause_session(name: str) -> None:
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "unpause",
+        name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.communicate()
+
+
+async def session_paused(name: str) -> bool:
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "inspect",
+        "--format",
+        "{{.State.Paused}}",
+        name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return stdout.decode().strip() == "true"

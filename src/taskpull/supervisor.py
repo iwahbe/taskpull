@@ -14,7 +14,15 @@ from .config import Config
 from .gh_proxy import GHProxy, generate_certs, parse_github_repo
 from .hooks import write_hooks_config
 from .ipc import run_ipc_server
-from .session import build_image, kill_session, launch_session, session_alive
+from .session import (
+    build_image,
+    kill_session,
+    launch_session,
+    pause_session,
+    session_alive,
+    session_paused,
+    unpause_session,
+)
 from .state import TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_tasks
 from .workspace import (
@@ -274,6 +282,21 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
         gh_proxy.run(config.gh_proxy_port, shutdown_event),
     )
 
+    # Unpause containers that were paused during previous shutdown.
+    active_sessions = [
+        (task_id, ts.session_name)
+        for task_id, ts in current_state.items()
+        if ts.status == TaskStatus.ACTIVE and ts.session_name
+    ]
+    if active_sessions:
+        paused_results = await asyncio.gather(
+            *(session_paused(name) for _, name in active_sessions)
+        )
+        for (task_id, name), paused in zip(active_sessions, paused_results):
+            if paused:
+                log.info("  %s: unpausing container", task_id)
+                asyncio.create_task(unpause_session(name))
+
     try:
         while not shutdown_event.is_set():
             log.info("--- Poll cycle ---")
@@ -297,6 +320,18 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             except asyncio.TimeoutError:
                 pass
     finally:
+        # Pause active containers so they don't miss events while the
+        # daemon is down.  Issue all pause commands in parallel and wait
+        # for them to complete before tearing down the IPC/proxy services.
+        pause_coros = [
+            pause_session(ts.session_name)
+            for ts in current_state.values()
+            if ts.status == TaskStatus.ACTIVE and ts.session_name
+        ]
+        if pause_coros:
+            log.info("Pausing %d active container(s)", len(pause_coros))
+            await asyncio.gather(*pause_coros)
+
         shutdown_event.set()
         await ipc_task
         await proxy_task
