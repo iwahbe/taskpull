@@ -127,12 +127,16 @@ class GHProxy:
         server_cert: Path,
         server_key: Path,
         on_pr_created: Callable[[str, int, str], Awaitable[None]] | None = None,
+        upstream_host: str = "api.github.com",
+        upstream_port: int = 443,
     ):
         self._gh_token = gh_token
         self._server_cert = server_cert
         self._server_key = server_key
         self._ca_cert = ca_cert
         self._on_pr_created = on_pr_created
+        self._upstream_host = upstream_host
+        self._upstream_port = upstream_port
         self._token_map: dict[str, str] = {}
         self._task_map: dict[str, str] = {}
 
@@ -216,11 +220,13 @@ class GHProxy:
         if not forwarded_path:
             forwarded_path = "/"
 
-        gh_ssl = ssl.create_default_context()
+        gh_ssl: ssl.SSLContext | None = ssl.create_default_context()
+        if self._upstream_port != 443:
+            gh_ssl = None
         try:
             gh_reader, gh_writer = await asyncio.open_connection(
-                "api.github.com",
-                443,
+                self._upstream_host,
+                self._upstream_port,
                 ssl=gh_ssl,
             )
         except Exception as exc:
@@ -235,7 +241,7 @@ class GHProxy:
                 forward_headers[k] = v
             if inject_token:
                 forward_headers["authorization"] = f"token {self._gh_token}"
-            forward_headers["host"] = "api.github.com"
+            forward_headers["host"] = self._upstream_host
             forward_headers["connection"] = "close"
 
             request_bytes = f"{method} {forwarded_path} HTTP/1.1\r\n".encode()

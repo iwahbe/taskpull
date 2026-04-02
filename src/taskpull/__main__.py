@@ -11,6 +11,7 @@ from .config import load_config
 from .credentials import get_claude_token
 from .daemon import daemonize, is_daemon_running, remove_pid, stop_daemon, write_pid
 from .ipc import send_command
+from .session import DockerBackend
 from .supervisor import run
 
 
@@ -38,7 +39,7 @@ def cmd_start(config):
     write_pid(config)
 
     try:
-        asyncio.run(run(config, ready_fd, claude_token))
+        asyncio.run(run(config, ready_fd, claude_token, DockerBackend()))
     finally:
         remove_pid(config)
 

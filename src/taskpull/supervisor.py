@@ -14,17 +14,7 @@ from .config import Config
 from .gh_proxy import GHProxy, generate_certs, parse_github_repo
 from .hooks import write_hooks_config
 from .ipc import run_ipc_server
-from .session import (
-    build_image,
-    kill_session,
-    launch_session,
-    pause_session,
-    session_alive,
-    session_claude_exited,
-    session_exit_info,
-    session_paused,
-    unpause_session,
-)
+from .session import SessionBackend
 from .state import TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_tasks
 from .workspace import (
@@ -157,7 +147,12 @@ async def _get_gh_token() -> str:
     return stdout.decode().strip()
 
 
-async def run(config: Config, ready_fd: int, claude_token: str) -> None:
+async def run(
+    config: Config,
+    ready_fd: int,
+    claude_token: str,
+    backend: SessionBackend,
+) -> None:
     log.info(
         "taskpull starting (poll_interval=%ds)",
         config.poll_interval,
@@ -165,7 +160,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     log.info("Tasks dir: %s", config.tasks_dir)
     log.info("State file: %s", config.state_file)
 
-    await build_image(config.docker_image)
+    await backend.build_image(config.docker_image)
 
     gh_token = await _get_gh_token()
     ca_cert, _ca_key, server_cert, server_key = generate_certs(config.certs_dir)
@@ -247,7 +242,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
             ts.exhaust_count += 1
-            await _cleanup_task(ts, gh_proxy)
+            await _cleanup_task(ts, gh_proxy, backend)
             _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
@@ -258,7 +253,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
-            await _cleanup_task(ts, gh_proxy)
+            await _cleanup_task(ts, gh_proxy, backend)
             _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
@@ -279,7 +274,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
                     "message": f"cannot pause task in state {ts.status.value}",
                 }
             if ts.status == TaskStatus.ACTIVE and ts.session_name:
-                await pause_session(ts.session_name)
+                await backend.pause_session(ts.session_name)
             ts.status = TaskStatus.PAUSED
             save_state(config.state_file, current_state)
             refresh_event.set()
@@ -296,7 +291,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
                     "message": f"cannot resume task in state {ts.status.value}",
                 }
             if ts.session_name:
-                await unpause_session(ts.session_name)
+                await backend.unpause_session(ts.session_name)
                 ts.status = TaskStatus.ACTIVE
             else:
                 ts.status = TaskStatus.IDLE
@@ -343,12 +338,12 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
     ]
     if active_sessions:
         paused_results = await asyncio.gather(
-            *(session_paused(name) for _, name in active_sessions)
+            *(backend.session_paused(name) for _, name in active_sessions)
         )
         for (task_id, name), paused in zip(active_sessions, paused_results):
             if paused:
                 log.info("  %s: unpausing container", task_id)
-                asyncio.create_task(unpause_session(name))
+                asyncio.create_task(backend.unpause_session(name))
 
     try:
         while not shutdown_event.is_set():
@@ -357,9 +352,9 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             state = load_state(config.state_file)
             tasks = discover_tasks(config.tasks_dir)
 
-            await _phase2_check_prs(state, tasks, gh_proxy)
-            await _phase3_check_sessions(state, gh_proxy)
-            await _phase4_launch(config, state, tasks, claude_token, gh_proxy)
+            await _phase2_check_prs(state, tasks, gh_proxy, backend)
+            await _phase3_check_sessions(state, gh_proxy, backend)
+            await _phase4_launch(config, state, tasks, claude_token, gh_proxy, backend)
 
             save_state(config.state_file, state)
             current_state.clear()
@@ -377,7 +372,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
         # daemon is down.  Issue all pause commands in parallel and wait
         # for them to complete before tearing down the IPC/proxy services.
         pause_coros = [
-            pause_session(ts.session_name)
+            backend.pause_session(ts.session_name)
             for ts in current_state.values()
             if ts.status == TaskStatus.ACTIVE and ts.session_name
         ]
@@ -391,13 +386,17 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
         log.info("taskpull stopped")
 
 
-async def _cleanup_task(ts: TaskState, gh_proxy: GHProxy | None = None) -> None:
-    if ts.proxy_secret and gh_proxy:
+async def _cleanup_task(
+    ts: TaskState,
+    gh_proxy: GHProxy,
+    backend: SessionBackend,
+) -> None:
+    if ts.proxy_secret:
         gh_proxy.unregister_task(ts.proxy_secret)
     if ts.workspace and is_repo_url(ts.repo or ""):
         await cleanup_workspace(Path(ts.workspace))
     if ts.session_name:
-        await kill_session(ts.session_name)
+        await backend.kill_session(ts.session_name)
 
 
 async def _owner_repo_for_state(task: TaskFile, ts: TaskState) -> str | None:
@@ -414,6 +413,7 @@ async def _phase2_check_prs(
     state: dict[str, TaskState],
     tasks: dict[str, TaskFile],
     gh_proxy: GHProxy,
+    backend: SessionBackend,
 ) -> None:
     log.info("Phase 2: Checking PRs")
     for task_id, ts in list(state.items()):
@@ -433,7 +433,7 @@ async def _phase2_check_prs(
 
         if pr_info.state == "MERGED":
             log.info("  %s: PR #%d merged", task_id, ts.pr_number)
-            await _cleanup_task(ts, gh_proxy)
+            await _cleanup_task(ts, gh_proxy, backend)
 
             if task.repeat:
                 ts.exhaust_count = 0
@@ -443,32 +443,33 @@ async def _phase2_check_prs(
 
         elif pr_info.state == "CLOSED":
             log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
-            await _cleanup_task(ts, gh_proxy)
+            await _cleanup_task(ts, gh_proxy, backend)
             _reset_task(ts)
 
 
 async def _phase3_check_sessions(
     state: dict[str, TaskState],
     gh_proxy: GHProxy,
+    backend: SessionBackend,
 ) -> None:
     log.info("Phase 3: Checking sessions")
     for task_id, ts in list(state.items()):
         if ts.status != TaskStatus.ACTIVE:
             continue
-        if ts.session_name and await session_alive(ts.session_name):
-            if await session_claude_exited(ts.session_name):
+        if ts.session_name and await backend.session_alive(ts.session_name):
+            if await backend.session_claude_exited(ts.session_name):
                 log.info("  %s: claude exited, resetting to idle", task_id)
-                await _cleanup_task(ts, gh_proxy)
+                await _cleanup_task(ts, gh_proxy, backend)
                 _reset_task(ts)
             continue
 
         # Container is dead. Capture exit info before cleanup removes it.
         if ts.session_name:
-            exit_code, error_output = await session_exit_info(ts.session_name)
+            exit_code, error_output = await backend.session_exit_info(ts.session_name)
         else:
             exit_code, error_output = None, ""
 
-        await _cleanup_task(ts, gh_proxy)
+        await _cleanup_task(ts, gh_proxy, backend)
 
         if exit_code is not None and exit_code != 0:
             log.info(
@@ -490,6 +491,7 @@ async def _phase4_launch(
     tasks: dict[str, TaskFile],
     claude_token: str,
     gh_proxy: GHProxy,
+    backend: SessionBackend,
 ) -> None:
     log.info("Phase 4: Launching new work")
 
@@ -582,7 +584,7 @@ async def _phase4_launch(
             anthropic_base_url = os.environ.get("ANTHROPIC_BASE_URL")
             if anthropic_base_url:
                 env["ANTHROPIC_BASE_URL"] = anthropic_base_url
-            await launch_session(
+            await backend.launch_session(
                 session_name,
                 ws,
                 prompt,

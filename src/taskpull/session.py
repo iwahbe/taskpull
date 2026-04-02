@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Protocol
 
 log = logging.getLogger(__name__)
 
@@ -15,6 +16,37 @@ _PROMPT_FILENAME = ".taskpull-prompt.txt"
 
 
 _PROJECT_DIR = Path("/Users/ianwahbe/Projects/taskpull")
+
+
+class SessionBackend(Protocol):
+    async def build_image(self, image_name: str) -> None: ...
+
+    async def launch_session(
+        self,
+        name: str,
+        workspace: Path,
+        prompt: str,
+        run_count: int,
+        task_id: str,
+        mcp_config: Path,
+        docker_image: str,
+        env: dict[str, str],
+        ca_cert: Path | None = None,
+    ) -> str: ...
+
+    async def session_alive(self, name: str) -> bool: ...
+
+    async def session_claude_exited(self, name: str) -> bool: ...
+
+    async def session_exit_info(self, name: str) -> tuple[int | None, str]: ...
+
+    async def kill_session(self, name: str) -> None: ...
+
+    async def pause_session(self, name: str) -> None: ...
+
+    async def unpause_session(self, name: str) -> None: ...
+
+    async def session_paused(self, name: str) -> bool: ...
 
 
 async def build_image(image_name: str) -> None:
@@ -310,3 +342,53 @@ async def session_claude_exited(name: str) -> bool:
     if proc.returncode != 0:
         return False
     return stdout.decode().strip() == "1"
+
+
+class DockerBackend:
+    async def build_image(self, image_name: str) -> None:
+        await build_image(image_name)
+
+    async def launch_session(
+        self,
+        name: str,
+        workspace: Path,
+        prompt: str,
+        run_count: int,
+        task_id: str,
+        mcp_config: Path,
+        docker_image: str,
+        env: dict[str, str],
+        ca_cert: Path | None = None,
+    ) -> str:
+        return await launch_session(
+            name,
+            workspace,
+            prompt,
+            run_count,
+            task_id,
+            mcp_config,
+            docker_image,
+            env,
+            ca_cert,
+        )
+
+    async def session_alive(self, name: str) -> bool:
+        return await session_alive(name)
+
+    async def session_claude_exited(self, name: str) -> bool:
+        return await session_claude_exited(name)
+
+    async def session_exit_info(self, name: str) -> tuple[int | None, str]:
+        return await session_exit_info(name)
+
+    async def kill_session(self, name: str) -> None:
+        await kill_session(name)
+
+    async def pause_session(self, name: str) -> None:
+        await pause_session(name)
+
+    async def unpause_session(self, name: str) -> None:
+        await unpause_session(name)
+
+    async def session_paused(self, name: str) -> bool:
+        return await session_paused(name)
