@@ -31,7 +31,8 @@ class SessionBackend(Protocol):
         mcp_config: Path,
         docker_image: str,
         env: dict[str, str],
-        ca_cert: Path | None = None,
+        ca_cert: Path | None,
+        gh_proxy_port: int,
     ) -> str: ...
 
     async def session_alive(self, name: str) -> bool: ...
@@ -109,34 +110,14 @@ async def launch_session(
     mcp_config: Path,
     docker_image: str,
     env: dict[str, str],
-    ca_cert: Path | None = None,
+    ca_cert: Path | None,
+    gh_proxy_port: int,
 ) -> str:
     prompt_file = workspace / _PROMPT_FILENAME
     prompt_file.write_text(prompt)
 
     if ca_cert:
         shutil.copy2(str(ca_cert), workspace / ".taskpull-ca.pem")
-
-    gh_host = env.get("GH_HOST", "")
-    if gh_host:
-        mise_settings = (
-            "[settings]\n"
-            "github_attestations = false\n"
-            "slsa = false\n"
-            "\n"
-            "[settings.aqua]\n"
-            "github_attestations = false\n"
-            "cosign = false\n"
-            "slsa = false\n"
-            "\n"
-            "[settings.github]\n"
-            "github_attestations = false\n"
-            "slsa = false\n"
-            "\n"
-            "[settings.url_replacements]\n"
-            f'"https://api.github.com" = "https://{gh_host}"\n'
-        )
-        (workspace / ".taskpull-mise-config.toml").write_text(mise_settings)
 
     home = Path.home()
     cmd = [
@@ -146,11 +127,24 @@ async def launch_session(
         "-t",
         "--name",
         name,
-        "-v",
-        f"{workspace}:/workspace",
-        "-v",
-        f"{home / '.claude'}:/home/worker/.claude",
     ]
+    if ca_cert and gh_proxy_port:
+        cmd.extend(
+            [
+                "--add-host",
+                "api.github.com:127.0.0.1",
+                "--sysctl",
+                "net.ipv4.ip_unprivileged_port_start=0",
+            ]
+        )
+    cmd.extend(
+        [
+            "-v",
+            f"{workspace}:/workspace",
+            "-v",
+            f"{home / '.claude'}:/home/worker/.claude",
+        ]
+    )
     for key, value in env.items():
         cmd.extend(["-e", f"{key}={value}"])
     cmd.append(docker_image)
@@ -203,26 +197,31 @@ async def launch_session(
         }
     )
 
-    ssl_setup = ""
+    proxy_setup = ""
     if ca_cert:
-        ssl_setup = (
+        proxy_setup = (
             "cat /etc/ssl/certs/ca-certificates.crt"
             " /workspace/.taskpull-ca.pem"
             " > /tmp/ca-bundle.pem && "
             "export SSL_CERT_FILE=/tmp/ca-bundle.pem && "
         )
+        if gh_proxy_port:
+            proxy_setup += (
+                "{ socat TCP-LISTEN:443,fork,reuseaddr,bind=127.0.0.1"
+                f" TCP:host.docker.internal:{gh_proxy_port} & "
+                "while ! socat /dev/null TCP:127.0.0.1:443 2>/dev/null; do "
+                "sleep 0.1; done; } && "
+            )
 
     mise_setup = (
         "if [ -f .mise.toml ] || [ -f mise.toml ] || [ -f .tool-versions ]; then "
-        "mkdir -p ~/.config/mise && "
-        "cp /workspace/.taskpull-mise-config.toml ~/.config/mise/config.toml && "
         "mise install --yes; "
         "fi && "
     )
 
     bash_script = (
         "cd /workspace && "
-        f"{ssl_setup}"
+        f"{proxy_setup}"
         f"{mise_setup}"
         f"echo '{claude_json}' > ~/.claude.json && "
         "cp /workspace/.taskpull-tmux.conf ~/.tmux.conf && "
@@ -385,6 +384,7 @@ class DockerBackend:
         docker_image: str,
         env: dict[str, str],
         ca_cert: Path | None = None,
+        gh_proxy_port: int = 0,
     ) -> str:
         return await launch_session(
             name,
@@ -396,6 +396,7 @@ class DockerBackend:
             docker_image,
             env,
             ca_cert,
+            gh_proxy_port,
         )
 
     async def session_alive(self, name: str) -> bool:

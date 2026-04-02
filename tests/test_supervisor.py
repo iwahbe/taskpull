@@ -50,7 +50,8 @@ class FakeBackend:
         mcp_config: Path,
         docker_image: str,
         env: dict[str, str],
-        ca_cert: Path | None = None,
+        ca_cert: Path | None,
+        gh_proxy_port: int,
     ) -> str:
         self.launched.append(
             {
@@ -63,6 +64,7 @@ class FakeBackend:
                 "docker_image": docker_image,
                 "env": env,
                 "ca_cert": ca_cert,
+                "gh_proxy_port": gh_proxy_port,
             }
         )
         return name

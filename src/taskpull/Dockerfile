@@ -6,7 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     curl \
     ripgrep \
+    libicu72 \
+    libssl3 \
+    socat \
     tmux \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install mise (into /usr/local/bin so it's available to all users)

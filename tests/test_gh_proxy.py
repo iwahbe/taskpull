@@ -1,19 +1,9 @@
-"""Tests for GHProxy authentication behavior.
-
-Replicates the failure where gh CLI cannot authenticate against the proxy
-because the supervisor sets GH_TOKEN instead of GH_ENTERPRISE_TOKEN.
-
-gh CLI uses GH_TOKEN only for github.com and ghe.com subdomains.
-For any other host (like host.docker.internal used by the proxy),
-gh requires GH_ENTERPRISE_TOKEN. When only GH_TOKEN is set, gh sends
-no Authorization header and the proxy returns 403 "Invalid proxy token".
-"""
+"""Tests for GHProxy authentication and callback behavior."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import ssl
 import subprocess
 import tempfile
@@ -176,12 +166,7 @@ async def proxy_server():
 
 @pytest.mark.asyncio
 async def test_proxy_rejects_missing_auth(proxy_server):
-    """Request without Authorization header gets 403 "Invalid proxy token".
-
-    This is the request gh sends when GH_HOST is a non-github.com host
-    and only GH_TOKEN (not GH_ENTERPRISE_TOKEN) is set: gh does not
-    attach the token and the proxy rejects it.
-    """
+    """Request without Authorization header gets 403."""
     proxy, port, ca_cert = proxy_server
     proxy.register_task("owner/repo", "test-task")
 
@@ -225,87 +210,6 @@ async def test_proxy_accepts_registered_token(proxy_server):
         auth_header=f"token {secret}",
     )
     assert not (status == 403 and "Invalid proxy token" in body)
-
-
-@pytest.mark.asyncio
-async def test_gh_cli_sends_no_auth_with_gh_token(proxy_server):
-    """gh CLI ignores GH_TOKEN when GH_HOST is not github.com/ghe.com.
-
-    This directly replicates the production failure: the supervisor sets
-    GH_HOST=host.docker.internal:<port> and GH_TOKEN=<proxy_secret>,
-    but gh treats the host as a GitHub Enterprise Server and looks for
-    GH_ENTERPRISE_TOKEN instead. Since that's not set, gh sends no
-    credentials and the proxy rejects the request.
-    """
-    proxy, port, ca_cert = proxy_server
-    secret = proxy.register_task("owner/repo", "test-task")
-
-    with tempfile.TemporaryDirectory() as home:
-        env = {
-            "GH_HOST": f"localhost:{port}",
-            "GH_TOKEN": secret,
-            "GH_PROMPT_DISABLED": "1",
-            "GH_NO_UPDATE_NOTIFIER": "1",
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": home,
-        }
-
-        proc = await asyncio.create_subprocess_exec(
-            "gh",
-            "api",
-            "/user",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        combined = stdout.decode() + stderr.decode()
-
-        assert proc.returncode != 0, (
-            f"gh should fail when GH_TOKEN is set but GH_ENTERPRISE_TOKEN is not. "
-            f"Output: {combined}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_gh_cli_authenticates_with_enterprise_token(proxy_server):
-    """gh CLI sends credentials when GH_ENTERPRISE_TOKEN is set.
-
-    This verifies the fix: using GH_ENTERPRISE_TOKEN instead of GH_TOKEN
-    makes gh send the proxy secret in the Authorization header.
-    """
-    proxy, port, ca_cert = proxy_server
-    secret = proxy.register_task("owner/repo", "test-task")
-
-    with tempfile.TemporaryDirectory() as home:
-        env = {
-            "GH_HOST": f"localhost:{port}",
-            "GH_ENTERPRISE_TOKEN": secret,
-            "GH_PROMPT_DISABLED": "1",
-            "GH_NO_UPDATE_NOTIFIER": "1",
-            "PATH": os.environ.get("PATH", ""),
-            "HOME": home,
-        }
-
-        proc = await asyncio.create_subprocess_exec(
-            "gh",
-            "api",
-            "/user",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        combined = stdout.decode() + stderr.decode()
-
-        # gh should NOT fail with "authentication" errors — it should
-        # at least reach the proxy. It may fail with TLS errors (the
-        # self-signed cert isn't in Go's trust store on macOS), but the
-        # error should NOT be about missing credentials.
-        assert "authentication token" not in combined.lower(), (
-            f"gh should use GH_ENTERPRISE_TOKEN for enterprise hosts. "
-            f"Output: {combined}"
-        )
 
 
 @pytest.mark.asyncio

@@ -70,7 +70,9 @@ def generate_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
     )
 
     san_conf = cert_dir / "san.cnf"
-    san_conf.write_text("[v3_req]\nsubjectAltName = DNS:host.docker.internal\n")
+    san_conf.write_text(
+        "[v3_req]\nsubjectAltName = DNS:host.docker.internal,DNS:api.github.com\n"
+    )
 
     subprocess.run(
         [
