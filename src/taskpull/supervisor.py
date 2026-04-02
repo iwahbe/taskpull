@@ -169,15 +169,28 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
 
     gh_token = await _get_gh_token()
     ca_cert, _ca_key, server_cert, server_key = generate_certs(config.certs_dir)
-    gh_proxy = GHProxy(gh_token, ca_cert, server_cert, server_key)
+
+    current_state: dict[str, TaskState] = load_state(config.state_file)
+
+    async def on_pr_created(task_id: str, pr_number: int, pr_url: str) -> None:
+        ts = current_state.get(task_id)
+        if ts is None:
+            log.warning("PR created for unknown task %s", task_id)
+            return
+        ts.pr_number = pr_number
+        ts.pr_url = pr_url
+        save_state(config.state_file, current_state)
+        log.info("PR #%d created for task %s: %s", pr_number, task_id, pr_url)
+
+    gh_proxy = GHProxy(
+        gh_token, ca_cert, server_cert, server_key, on_pr_created=on_pr_created
+    )
 
     os.write(ready_fd, b"\x00")
     os.close(ready_fd)
 
     shutdown_event = asyncio.Event()
     refresh_event = asyncio.Event()
-
-    current_state: dict[str, TaskState] = load_state(config.state_file)
 
     # Re-register proxy secrets for tasks that survived the daemon restart
     # so that their containers can continue to use the GH proxy.
@@ -194,7 +207,7 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             log.warning("  %s: cannot resolve owner/repo for proxy restore", task_id)
             continue
         if owner_repo:
-            gh_proxy.restore_task(ts.proxy_secret, owner_repo)
+            gh_proxy.restore_task(ts.proxy_secret, owner_repo, task_id)
             log.info("  %s: restored proxy mapping", task_id)
 
     async def ipc_handler(request: dict[str, Any]) -> dict[str, Any]:
@@ -260,9 +273,6 @@ async def run(config: Config, ready_fd: int, claude_token: str) -> None:
             event_type = event.get("type")
             if event_type == "session_start":
                 ts.session_id = event["session_id"]
-            elif event_type == "pr_created":
-                ts.pr_number = event["pr_number"]
-                ts.pr_url = event["pr_url"]
             elif event_type == "activity":
                 ts.activity = event["activity"]
             save_state(config.state_file, current_state)
@@ -515,7 +525,7 @@ async def _phase4_launch(
                 config.ipc_port,
             )
 
-            proxy_secret = gh_proxy.register_task(owner_repo)
+            proxy_secret = gh_proxy.register_task(owner_repo, task_id)
 
             prompt = _build_prompt(task)
             session_name = f"taskpull-{task_id}"

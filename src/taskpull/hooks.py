@@ -59,17 +59,6 @@ def write_hooks_config(
                     ],
                 }
             ],
-            "PostToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": notify_cmd,
-                        }
-                    ],
-                }
-            ],
             "Stop": [
                 {
                     "matcher": "",

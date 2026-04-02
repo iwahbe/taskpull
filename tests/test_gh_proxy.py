@@ -43,37 +43,74 @@ def _generate_localhost_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
 
     subprocess.run(
         [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", str(ca_key), "-out", str(ca_cert),
-            "-days", "1", "-nodes", "-subj", "/CN=test-ca",
-            "-extensions", "v3_ca", "-config", str(ca_ext),
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(ca_key),
+            "-out",
+            str(ca_cert),
+            "-days",
+            "1",
+            "-nodes",
+            "-subj",
+            "/CN=test-ca",
+            "-extensions",
+            "v3_ca",
+            "-config",
+            str(ca_ext),
         ],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
 
     csr_path = cert_dir / "server.csr"
     subprocess.run(
         [
-            "openssl", "req", "-newkey", "rsa:2048",
-            "-keyout", str(server_key), "-out", str(csr_path),
-            "-nodes", "-subj", "/CN=localhost",
+            "openssl",
+            "req",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(server_key),
+            "-out",
+            str(csr_path),
+            "-nodes",
+            "-subj",
+            "/CN=localhost",
         ],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
 
     san_conf = cert_dir / "san.cnf"
-    san_conf.write_text(
-        "[v3_req]\nsubjectAltName = DNS:localhost,IP:127.0.0.1\n"
-    )
+    san_conf.write_text("[v3_req]\nsubjectAltName = DNS:localhost,IP:127.0.0.1\n")
 
     subprocess.run(
         [
-            "openssl", "x509", "-req",
-            "-in", str(csr_path), "-CA", str(ca_cert), "-CAkey", str(ca_key),
-            "-CAcreateserial", "-out", str(server_cert),
-            "-days", "1", "-extfile", str(san_conf), "-extensions", "v3_req",
+            "openssl",
+            "x509",
+            "-req",
+            "-in",
+            str(csr_path),
+            "-CA",
+            str(ca_cert),
+            "-CAkey",
+            str(ca_key),
+            "-CAcreateserial",
+            "-out",
+            str(server_cert),
+            "-days",
+            "1",
+            "-extfile",
+            str(san_conf),
+            "-extensions",
+            "v3_req",
         ],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
 
     return ca_cert, ca_key, server_cert, server_key
@@ -88,7 +125,9 @@ async def _send_https_request(
     """Send an HTTPS GET to localhost:port and return (status_code, body)."""
     ssl_ctx = ssl.create_default_context(cafile=str(ca_cert))
     reader, writer = await asyncio.open_connection(
-        "localhost", port, ssl=ssl_ctx,
+        "localhost",
+        port,
+        ssl=ssl_ctx,
     )
 
     try:
@@ -124,7 +163,10 @@ async def proxy_server():
         ssl_ctx.load_cert_chain(server_cert, server_key)
 
         server = await asyncio.start_server(
-            proxy._handle_connection, "127.0.0.1", 0, ssl=ssl_ctx,
+            proxy._handle_connection,
+            "127.0.0.1",
+            0,
+            ssl=ssl_ctx,
         )
         port = server.sockets[0].getsockname()[1]
 
@@ -141,7 +183,7 @@ async def test_proxy_rejects_missing_auth(proxy_server):
     attach the token and the proxy rejects it.
     """
     proxy, port, ca_cert = proxy_server
-    proxy.register_task("owner/repo")
+    proxy.register_task("owner/repo", "test-task")
 
     status, body = await _send_https_request(port, "/api/v3/user", ca_cert)
     assert status == 403
@@ -152,10 +194,12 @@ async def test_proxy_rejects_missing_auth(proxy_server):
 async def test_proxy_rejects_wrong_token(proxy_server):
     """Request with an unregistered token gets 403."""
     proxy, port, ca_cert = proxy_server
-    proxy.register_task("owner/repo")
+    proxy.register_task("owner/repo", "test-task")
 
     status, body = await _send_https_request(
-        port, "/api/v3/user", ca_cert,
+        port,
+        "/api/v3/user",
+        ca_cert,
         auth_header="token wrong-secret",
     )
     assert status == 403
@@ -172,10 +216,12 @@ async def test_proxy_accepts_registered_token(proxy_server):
     proxy itself.
     """
     proxy, port, ca_cert = proxy_server
-    secret = proxy.register_task("owner/repo")
+    secret = proxy.register_task("owner/repo", "test-task")
 
     status, body = await _send_https_request(
-        port, "/api/v3/user", ca_cert,
+        port,
+        "/api/v3/user",
+        ca_cert,
         auth_header=f"token {secret}",
     )
     assert not (status == 403 and "Invalid proxy token" in body)
@@ -192,7 +238,7 @@ async def test_gh_cli_sends_no_auth_with_gh_token(proxy_server):
     credentials and the proxy rejects the request.
     """
     proxy, port, ca_cert = proxy_server
-    secret = proxy.register_task("owner/repo")
+    secret = proxy.register_task("owner/repo", "test-task")
 
     with tempfile.TemporaryDirectory() as home:
         env = {
@@ -205,7 +251,9 @@ async def test_gh_cli_sends_no_auth_with_gh_token(proxy_server):
         }
 
         proc = await asyncio.create_subprocess_exec(
-            "gh", "api", "/user",
+            "gh",
+            "api",
+            "/user",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -227,7 +275,7 @@ async def test_gh_cli_authenticates_with_enterprise_token(proxy_server):
     makes gh send the proxy secret in the Authorization header.
     """
     proxy, port, ca_cert = proxy_server
-    secret = proxy.register_task("owner/repo")
+    secret = proxy.register_task("owner/repo", "test-task")
 
     with tempfile.TemporaryDirectory() as home:
         env = {
@@ -240,7 +288,9 @@ async def test_gh_cli_authenticates_with_enterprise_token(proxy_server):
         }
 
         proc = await asyncio.create_subprocess_exec(
-            "gh", "api", "/user",
+            "gh",
+            "api",
+            "/user",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -256,3 +306,89 @@ async def test_gh_cli_authenticates_with_enterprise_token(proxy_server):
             f"gh should use GH_ENTERPRISE_TOKEN for enterprise hosts. "
             f"Output: {combined}"
         )
+
+
+@pytest.mark.asyncio
+async def test_pr_created_callback_fires_on_pulls_post():
+    """_maybe_notify_pr_created calls the callback for a successful PR create."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_pr_created(task_id: str, pr_number: int, pr_url: str) -> None:
+            results.append((task_id, pr_number, pr_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_pr_created=on_pr_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        body = json.dumps(
+            {
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+            }
+        ).encode()
+
+        await proxy._maybe_notify_pr_created(
+            "POST",
+            "/repos/owner/repo/pulls",
+            201,
+            body,
+            secret,
+        )
+
+        assert results == [
+            ("my-task", 42, "https://github.com/owner/repo/pull/42"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_pr_created_callback_skips_non_create():
+    """_maybe_notify_pr_created ignores non-PR-create requests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_pr_created(task_id: str, pr_number: int, pr_url: str) -> None:
+            results.append((task_id, pr_number, pr_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_pr_created=on_pr_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        body = json.dumps(
+            {"number": 1, "html_url": "https://github.com/owner/repo/pull/1"}
+        ).encode()
+
+        # GET should not trigger
+        await proxy._maybe_notify_pr_created(
+            "GET", "/repos/owner/repo/pulls", 200, body, secret
+        )
+        # Wrong status code
+        await proxy._maybe_notify_pr_created(
+            "POST", "/repos/owner/repo/pulls", 422, body, secret
+        )
+        # Sub-path (e.g. comments on a PR)
+        await proxy._maybe_notify_pr_created(
+            "POST", "/repos/owner/repo/pulls/1/comments", 201, body, secret
+        )
+        # Wrong token
+        await proxy._maybe_notify_pr_created(
+            "POST", "/repos/owner/repo/pulls", 201, body, "bad-token"
+        )
+
+        assert results == []

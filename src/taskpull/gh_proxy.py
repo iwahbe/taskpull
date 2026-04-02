@@ -7,6 +7,7 @@ import re
 import secrets
 import ssl
 import subprocess
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -125,28 +126,34 @@ class GHProxy:
         ca_cert: Path,
         server_cert: Path,
         server_key: Path,
+        on_pr_created: Callable[[str, int, str], Awaitable[None]] | None = None,
     ):
         self._gh_token = gh_token
         self._server_cert = server_cert
         self._server_key = server_key
         self._ca_cert = ca_cert
+        self._on_pr_created = on_pr_created
         self._token_map: dict[str, str] = {}
+        self._task_map: dict[str, str] = {}
 
     @property
     def ca_cert_path(self) -> Path:
         return self._ca_cert
 
-    def register_task(self, owner_repo: str) -> str:
+    def register_task(self, owner_repo: str, task_id: str) -> str:
         secret = secrets.token_urlsafe(32)
         self._token_map[secret] = owner_repo
+        self._task_map[secret] = task_id
         return secret
 
-    def restore_task(self, secret: str, owner_repo: str) -> None:
+    def restore_task(self, secret: str, owner_repo: str, task_id: str) -> None:
         """Re-register an existing proxy secret (e.g. after daemon restart)."""
         self._token_map[secret] = owner_repo
+        self._task_map[secret] = task_id
 
     def unregister_task(self, secret: str) -> None:
         self._token_map.pop(secret, None)
+        self._task_map.pop(secret, None)
 
     async def run(self, port: int, shutdown_event: asyncio.Event) -> None:
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -238,11 +245,15 @@ class GHProxy:
             gh_writer.write(request_bytes)
             await gh_writer.drain()
 
-            response = await self._read_response(gh_reader)
-            writer.write(response)
+            raw, status_code, body = await self._read_response(gh_reader)
+            writer.write(raw)
             await writer.drain()
 
-            log.info("GH proxy: %s %s -> forwarded", method, path)
+            log.info("GH proxy: %s %s -> forwarded (%d)", method, path, status_code)
+
+            await self._maybe_notify_pr_created(
+                method, forwarded_path, status_code, body, proxy_token
+            )
         finally:
             gh_writer.close()
             await gh_writer.wait_closed()
@@ -276,9 +287,18 @@ class GHProxy:
 
         return method, path, headers, body
 
-    async def _read_response(self, reader: asyncio.StreamReader) -> bytes:
+    async def _read_response(
+        self, reader: asyncio.StreamReader
+    ) -> tuple[bytes, int, bytes]:
+        """Read an HTTP response.
+
+        Returns (raw_wire_bytes, status_code, decoded_body).
+        """
         status_line = await asyncio.wait_for(reader.readline(), timeout=30)
         result = bytearray(status_line)
+
+        parts = status_line.decode("latin-1").strip().split(" ", 2)
+        status_code = int(parts[1]) if len(parts) >= 2 else 0
 
         content_length = -1
         chunked = False
@@ -293,6 +313,7 @@ class GHProxy:
             if line in (b"\r\n", b"\n"):
                 break
 
+        body = bytearray()
         if chunked:
             while True:
                 size_line = await reader.readline()
@@ -304,18 +325,20 @@ class GHProxy:
                     break
                 chunk = await reader.readexactly(size)
                 result += chunk
+                body += chunk
                 crlf = await reader.readline()
                 result += crlf
         elif content_length >= 0:
             if content_length > 0:
-                body = await reader.readexactly(content_length)
-                result += body
+                data = await reader.readexactly(content_length)
+                result += data
+                body += data
         else:
-            # Connection: close — read until EOF.
             tail = await reader.read()
             result += tail
+            body += tail
 
-        return bytes(result)
+        return bytes(result), status_code, bytes(body)
 
     @staticmethod
     def _extract_token(headers: dict[str, str]) -> str | None:
@@ -362,6 +385,35 @@ class GHProxy:
             return True, "", False
 
         return True, "", True
+
+    async def _maybe_notify_pr_created(
+        self,
+        method: str,
+        path: str,
+        status_code: int,
+        body: bytes,
+        proxy_token: str | None,
+    ) -> None:
+        if self._on_pr_created is None:
+            return
+        if method != "POST" or status_code != 201:
+            return
+        if not re.match(r"/repos/[^/]+/[^/]+/pulls$", path):
+            return
+        if proxy_token is None:
+            return
+        task_id = self._task_map.get(proxy_token)
+        if not task_id:
+            return
+        try:
+            data = json.loads(body)
+            pr_number = data["number"]
+            pr_url = data["html_url"]
+        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+            log.warning("GH proxy: failed to parse PR creation response")
+            return
+        log.info("GH proxy: detected PR #%d for task %s", pr_number, task_id)
+        await self._on_pr_created(task_id, pr_number, pr_url)
 
     @staticmethod
     async def _send_error(
