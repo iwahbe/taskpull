@@ -217,7 +217,7 @@ class TestPhase3CheckSessions:
         assert backend.killed == ["taskpull-task-a"]
 
     @pytest.mark.asyncio
-    async def test_init_failure_marks_broken(self, tmp_path: Path):
+    async def test_init_failure_retries_before_broken(self, tmp_path: Path):
         backend = FakeBackend()
         backend.alive_sessions["taskpull-task-a"] = True
         backend.claude_exited_sessions["taskpull-task-a"] = True
@@ -233,7 +233,31 @@ class TestPhase3CheckSessions:
 
         await _phase3_check_sessions(state, gh_proxy, backend)
 
+        assert state["task-a"].status == TaskStatus.IDLE
+        assert state["task-a"].setup_failure_count == 1
+        assert state["task-a"].error_message == "mise install failed"
+        assert backend.killed == ["taskpull-task-a"]
+
+    @pytest.mark.asyncio
+    async def test_init_failure_marks_broken_after_3_attempts(self, tmp_path: Path):
+        backend = FakeBackend()
+        backend.alive_sessions["taskpull-task-a"] = True
+        backend.claude_exited_sessions["taskpull-task-a"] = True
+        backend.pane_output["taskpull-task-a"] = "mise install failed"
+        gh_proxy = _make_gh_proxy(tmp_path)
+        state = {
+            "task-a": TaskState(
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                session_id=None,
+                setup_failure_count=2,
+            ),
+        }
+
+        await _phase3_check_sessions(state, gh_proxy, backend)
+
         assert state["task-a"].status == TaskStatus.BROKEN
+        assert state["task-a"].setup_failure_count == 3
         assert state["task-a"].error_message == "mise install failed"
         assert backend.killed == ["taskpull-task-a"]
 
@@ -477,6 +501,35 @@ class TestPhase4Launch:
                 repo="https://github.com/owner/repo",
                 repeat=True,
                 prompt="Check",
+            ),
+        }
+
+        with patch(
+            "taskpull.supervisor.clone_repo",
+            side_effect=_mock_clone_repo(config.workspace_dir),
+        ):
+            await _phase4_launch(config, state, tasks, "token", gh_proxy, backend)
+
+        assert len(backend.launched) == 0
+
+    @pytest.mark.asyncio
+    async def test_respects_setup_retry_backoff(self, tmp_path: Path):
+        backend = FakeBackend()
+        gh_proxy = _make_gh_proxy(tmp_path)
+
+        config = Config(user_dir=tmp_path, poll_interval=300)
+
+        state: dict[str, TaskState] = {
+            "task-a": TaskState(
+                setup_failure_count=1,
+                last_launched_at=int(time.time()),
+            ),
+        }
+        tasks = {
+            "task-a": TaskFile(
+                repo="https://github.com/owner/repo",
+                repeat=False,
+                prompt="Fix bug",
             ),
         }
 

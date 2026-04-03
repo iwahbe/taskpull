@@ -211,21 +211,20 @@ class GHProxy:
         method, path, headers, body = parsed
 
         proxy_token = self._extract_token(headers)
-        if proxy_token is None:
-            await self._send_error(writer, 403, "Invalid proxy token")
-            return
-        allowed_repo = self._token_map.get(proxy_token)
-        if allowed_repo is None:
-            await self._send_error(writer, 403, "Invalid proxy token")
-            return
+        inject_token = False
+        if proxy_token is not None:
+            allowed_repo = self._token_map.get(proxy_token)
+            if allowed_repo is None:
+                await self._send_error(writer, 403, "Invalid proxy token")
+                return
 
-        allowed, reason, inject_token = self._check_permission(
-            method, path, body, allowed_repo
-        )
-        if not allowed:
-            log.warning("GH proxy blocked: %s %s — %s", method, path, reason)
-            await self._send_error(writer, 403, reason)
-            return
+            allowed, reason, inject_token = self._check_permission(
+                method, path, body, allowed_repo
+            )
+            if not allowed:
+                log.warning("GH proxy blocked: %s %s — %s", method, path, reason)
+                await self._send_error(writer, 403, reason)
+                return
 
         forwarded_path = path
         if forwarded_path.startswith("/api/v3"):
@@ -259,7 +258,13 @@ class GHProxy:
                     continue
                 forward_headers[k] = v
             if inject_token:
-                forward_headers["authorization"] = f"token {self._gh_token}"
+                if request_host == "github.com":
+                    cred = base64.b64encode(
+                        f"x-access-token:{self._gh_token}".encode()
+                    ).decode()
+                    forward_headers["authorization"] = f"Basic {cred}"
+                else:
+                    forward_headers["authorization"] = f"token {self._gh_token}"
             forward_headers["host"] = upstream_host
             forward_headers["connection"] = "close"
 
@@ -280,7 +285,7 @@ class GHProxy:
             log.info("GH proxy: %s %s -> forwarded (%d)", method, path, status_code)
 
             await self._maybe_notify_pr_created(
-                method, forwarded_path, status_code, body, proxy_token
+                method, forwarded_path, status_code, body, proxy_token or ""
             )
         finally:
             gh_writer.close()

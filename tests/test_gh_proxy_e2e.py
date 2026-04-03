@@ -316,6 +316,7 @@ async def _send_proxy_request(
     path: str,
     auth_header: str | None = None,
     body: bytes = b"",
+    host: str = "localhost",
 ) -> tuple[int, str]:
     ssl_ctx = ssl.create_default_context(cafile=str(ca_cert))
     reader, writer = await asyncio.open_connection(
@@ -324,7 +325,7 @@ async def _send_proxy_request(
         ssl=ssl_ctx,
     )
     try:
-        headers = "Host: localhost\r\nConnection: close\r\n"
+        headers = f"Host: {host}\r\nConnection: close\r\n"
         if auth_header:
             headers += f"Authorization: {auth_header}\r\n"
         if body:
@@ -517,3 +518,90 @@ async def test_proxy_blocks_graphql_mutation(tmp_path: Path):
     assert status == 403
     assert "mutation" in body.lower()
     assert len(received) == 0
+
+
+@pytest.mark.asyncio
+async def test_proxy_forwards_unauthenticated_request(tmp_path: Path):
+    """Requests without auth are forwarded to upstream without token injection."""
+    cert_dir = tmp_path / "certs"
+    ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+    fake_server, upstream_port, received = await _fake_github_server()
+
+    proxy = GHProxy(
+        "real-gh-token",
+        ca_cert,
+        server_cert,
+        server_key,
+        upstream_host="127.0.0.1",
+        upstream_port=upstream_port,
+    )
+    proxy.register_task("owner/repo", "test-task")
+
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(server_cert, server_key)
+    proxy_server = await asyncio.start_server(
+        proxy._handle_connection,
+        "127.0.0.1",
+        0,
+        ssl=ssl_ctx,
+    )
+    proxy_port = proxy_server.sockets[0].getsockname()[1]
+
+    async with fake_server, proxy_server:
+        status, _ = await _send_proxy_request(
+            proxy_port,
+            ca_cert,
+            "GET",
+            "/repos/owner/repo/issues",
+        )
+
+    assert status == 200
+    assert len(received) == 1
+    assert "authorization" not in received[0]["headers"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_uses_basic_auth_for_git_host(tmp_path: Path):
+    """When forwarding to github.com, the real token uses Basic auth format."""
+    cert_dir = tmp_path / "certs"
+    ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+    fake_server, upstream_port, received = await _fake_github_server()
+
+    proxy = GHProxy(
+        "real-gh-token",
+        ca_cert,
+        server_cert,
+        server_key,
+        upstream_host="127.0.0.1",
+        upstream_port=upstream_port,
+    )
+    secret = proxy.register_task("owner/repo", "test-task")
+
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(server_cert, server_key)
+    proxy_server = await asyncio.start_server(
+        proxy._handle_connection,
+        "127.0.0.1",
+        0,
+        ssl=ssl_ctx,
+    )
+    proxy_port = proxy_server.sockets[0].getsockname()[1]
+
+    creds = base64.b64encode(f"x-access-token:{secret}".encode()).decode()
+
+    async with fake_server, proxy_server:
+        status, _ = await _send_proxy_request(
+            proxy_port,
+            ca_cert,
+            "GET",
+            "/owner/repo.git/info/refs?service=git-receive-pack",
+            auth_header=f"Basic {creds}",
+            host="github.com",
+        )
+
+    assert status == 200
+    assert len(received) == 1
+    expected_creds = base64.b64encode(b"x-access-token:real-gh-token").decode()
+    assert received[0]["headers"]["authorization"] == f"Basic {expected_creds}"

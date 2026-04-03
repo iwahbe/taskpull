@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep \
     libicu72 \
     libssl3 \
+    make \
     socat \
     tmux \
     unzip \

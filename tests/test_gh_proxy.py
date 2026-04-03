@@ -166,17 +166,6 @@ async def proxy_server():
 
 
 @pytest.mark.asyncio
-async def test_proxy_rejects_missing_auth(proxy_server):
-    """Request without Authorization header gets 403."""
-    proxy, port, ca_cert = proxy_server
-    proxy.register_task("owner/repo", "test-task")
-
-    status, body = await _send_https_request(port, "/api/v3/user", ca_cert)
-    assert status == 403
-    assert "Invalid proxy token" in body
-
-
-@pytest.mark.asyncio
 async def test_proxy_rejects_wrong_token(proxy_server):
     """Request with an unregistered token gets 403."""
     proxy, port, ca_cert = proxy_server

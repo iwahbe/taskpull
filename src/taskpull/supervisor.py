@@ -255,6 +255,7 @@ async def run(
                 return {"status": "error", "message": f"unknown task: {tid}"}
             await _cleanup_task(ts, gh_proxy, backend)
             _reset_task(ts)
+            ts.setup_failure_count = 0
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("restart received for %s", tid)
@@ -308,6 +309,7 @@ async def run(
             event_type = event.get("type")
             if event_type == "session_start":
                 ts.session_id = event["session_id"]
+                ts.setup_failure_count = 0
             elif event_type == "activity":
                 ts.activity = event["activity"]
             save_state(config.state_file, current_state)
@@ -459,11 +461,24 @@ async def _phase3_check_sessions(
             if await backend.session_claude_exited(ts.session_name):
                 if ts.session_id is None:
                     error_output = await backend.session_pane_output(ts.session_name)
-                    log.info("  %s: initialization failed, marking broken", task_id)
+                    ts.setup_failure_count += 1
                     await _cleanup_task(ts, gh_proxy, backend)
-                    _reset_task(ts)
-                    ts.status = TaskStatus.BROKEN
-                    ts.error_message = error_output
+                    if ts.setup_failure_count >= 3:
+                        log.info(
+                            "  %s: initialization failed 3 times, marking broken",
+                            task_id,
+                        )
+                        _reset_task(ts)
+                        ts.status = TaskStatus.BROKEN
+                        ts.error_message = error_output
+                    else:
+                        log.info(
+                            "  %s: initialization failed (attempt %d/3), will retry",
+                            task_id,
+                            ts.setup_failure_count,
+                        )
+                        _reset_task(ts)
+                        ts.error_message = error_output
                 else:
                     log.info("  %s: claude exited, resetting to idle", task_id)
                     await _cleanup_task(ts, gh_proxy, backend)
@@ -525,7 +540,10 @@ async def _phase4_launch(
             TaskStatus.BROKEN,
         ):
             continue
-        backoff = ts.exhaust_backoff(config.poll_interval)
+        backoff = max(
+            ts.exhaust_backoff(config.poll_interval),
+            ts.setup_retry_backoff(config.poll_interval),
+        )
         if backoff > 0 and ts.seconds_since_launch() < backoff:
             continue
         if task.lane_key in busy_lanes:

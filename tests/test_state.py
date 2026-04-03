@@ -28,6 +28,7 @@ class TestTaskStateRoundTrip:
             proxy_secret="secret-abc",
             last_launched_at=1700000000,
             error_message="some error",
+            setup_failure_count=2,
         )
         assert TaskState.from_dict(ts.to_dict()) == ts
 
@@ -83,6 +84,24 @@ class TestExhaustBackoff:
     def test_capped_at_24x(self):
         ts = TaskState(exhaust_count=100)
         assert ts.exhaust_backoff(300) == 24 * 300
+
+
+class TestSetupRetryBackoff:
+    def test_zero_failure_count(self):
+        ts = TaskState(setup_failure_count=0)
+        assert ts.setup_retry_backoff(300) == 0
+
+    def test_failure_count_one(self):
+        ts = TaskState(setup_failure_count=1)
+        assert ts.setup_retry_backoff(300) == 2 * 300
+
+    def test_failure_count_two(self):
+        ts = TaskState(setup_failure_count=2)
+        assert ts.setup_retry_backoff(300) == 4 * 300
+
+    def test_capped_at_24x(self):
+        ts = TaskState(setup_failure_count=100)
+        assert ts.setup_retry_backoff(300) == 24 * 300
 
 
 class TestLoadSaveState:

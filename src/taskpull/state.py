@@ -34,6 +34,7 @@ class TaskState:
     proxy_secret: str | None = None
     last_launched_at: int = 0
     error_message: str | None = None
+    setup_failure_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -44,6 +45,12 @@ class TaskState:
         if self.exhaust_count <= 0:
             return 0
         multiplier = min(2**self.exhaust_count, 24)
+        return multiplier * poll_interval
+
+    def setup_retry_backoff(self, poll_interval: int) -> float:
+        if self.setup_failure_count <= 0:
+            return 0
+        multiplier = min(2**self.setup_failure_count, 24)
         return multiplier * poll_interval
 
     def seconds_since_launch(self) -> float:
