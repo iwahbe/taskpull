@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import curses
+import os
 import shlex
 import signal
 import shutil
@@ -65,13 +66,28 @@ def launch_tui(config: Config) -> None:
         _kill_session()
 
     tasks = _fetch_tasks(config.ipc_port)
-
-    sidebar_cmd = (
-        f"{sys.executable} -m taskpull for-task tui-sidebar --port {config.ipc_port}"
-    )
     right_cmd = _right_pane_cmd(tasks)
 
-    _tmux("new-session", "-d", "-s", _SESSION_NAME, sidebar_cmd)
+    # Pane 0.0 runs a holder process; the forked child attaches to its TTY
+    # and renders curses directly, guaranteeing it always uses the current code.
+    # Set the session size to match the current terminal so panes start at the
+    # correct dimensions (detached sessions default to 80x24 otherwise).
+    term_size = os.get_terminal_size()
+    _tmux(
+        "new-session",
+        "-d",
+        "-s",
+        _SESSION_NAME,
+        "-x",
+        str(term_size.columns),
+        "-y",
+        str(term_size.lines),
+        "exec sleep 2147483647",
+    )
+
+    result = _tmux("display-message", "-t", f"{_SESSION_NAME}:0.0", "-p", "#{pane_tty}")
+    pane_tty = result.stdout.strip()
+
     _tmux(
         "split-window",
         "-h",
@@ -79,7 +95,7 @@ def launch_tui(config: Config) -> None:
         "-t",
         f"{_SESSION_NAME}:0",
         "-l",
-        "80%",
+        "70%",
         right_cmd,
     )
 
@@ -104,12 +120,38 @@ def launch_tui(config: Config) -> None:
     _tmux("unbind-key", "-T", "copy-mode", "MouseDrag1Pane")
     _tmux("unbind-key", "-T", "copy-mode-vi", "MouseDrag1Pane")
 
-    # Ensure cleanup on exit.
+    # Fork: child attaches to pane 0.0's TTY and runs the sidebar curses loop
+    # using the same code the parent loaded.
+    child_pid = os.fork()
+    if child_pid == 0:
+        try:
+            os.setsid()
+            fd = os.open(pane_tty, os.O_RDWR)
+            os.dup2(fd, 0)
+            os.dup2(fd, 1)
+            os.dup2(fd, 2)
+            if fd > 2:
+                os.close(fd)
+            run_sidebar(config.ipc_port)
+        except Exception:
+            pass
+        finally:
+            os._exit(0)
+
+    # Parent: attach to the tmux session.
     prev_sigterm = signal.getsignal(signal.SIGTERM)
     prev_sighup = signal.getsignal(signal.SIGHUP)
 
-    def _on_signal(signum: int, _frame: Any) -> None:
+    def _cleanup() -> None:
+        try:
+            os.kill(child_pid, signal.SIGTERM)
+            os.waitpid(child_pid, 0)
+        except (ProcessLookupError, ChildProcessError):
+            pass
         _kill_session()
+
+    def _on_signal(signum: int, _frame: Any) -> None:
+        _cleanup()
         sys.exit(128 + signum)
 
     signal.signal(signal.SIGTERM, _on_signal)
@@ -118,7 +160,7 @@ def launch_tui(config: Config) -> None:
     try:
         subprocess.run(["tmux", "attach", "-t", _SESSION_NAME])
     finally:
-        _kill_session()
+        _cleanup()
         signal.signal(signal.SIGTERM, prev_sigterm)
         signal.signal(signal.SIGHUP, prev_sighup)
 
@@ -214,10 +256,11 @@ def _draw_sidebar(
     stdscr.addnstr(0, 0, " taskpull ", usable_x, curses.A_BOLD | curses.color_pair(1))
     stdscr.addnstr(1, 0, "─" * usable_x, usable_x, curses.color_pair(5))
 
-    # Task list
+    # Task list — reserve the last row for the footer.
+    footer_row = max_y - 1
     row = 3
     for i, (tid, info) in enumerate(task_list):
-        if row >= max_y - 2:
+        if row >= footer_row - 1:
             break
 
         label, color = _status_label(info)
@@ -242,16 +285,18 @@ def _draw_sidebar(
         row += 1
 
         for detail_text, detail_color in _pr_detail_lines(info):
-            if row >= max_y - 2:
+            if row >= footer_row - 1:
                 break
             stdscr.addnstr(
                 row, 0, detail_text, usable_x, curses.color_pair(detail_color)
             )
             row += 1
 
+        row += 1  # blank line between tasks
+
     # Footer
     stdscr.addnstr(
-        max_y - 1,
+        footer_row,
         0,
         " ⌥ j/k:sel  ⌥ h/l:pane  p:pause  r:resume  R:restart  q:quit",
         usable_x,
@@ -271,11 +316,11 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
 
     # Color pairs: 1=header, 2=green(active), 3=blue(done), 4=yellow(draft),
     # 5=dim, 6=red(broken)
-    curses.init_pair(1, curses.COLOR_WHITE, -1)
+    curses.init_pair(1, -1, -1)
     curses.init_pair(2, curses.COLOR_GREEN, -1)
     curses.init_pair(3, curses.COLOR_BLUE, -1)
     curses.init_pair(4, curses.COLOR_YELLOW, -1)
-    curses.init_pair(5, curses.COLOR_WHITE, -1)
+    curses.init_pair(5, -1, -1)
     curses.init_pair(6, curses.COLOR_RED, -1)
 
     curses.halfdelay(20)  # 2 second timeout for getch

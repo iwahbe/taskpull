@@ -11,6 +11,15 @@ Pull-based multi-repo Claude Code task runner.
 
 - `| None` is only for modeling genuinely nullable data. Do not use `X | None = None` as a fallback default when the caller can pass the value explicitly.
 
+## Reinstalling & restarting the daemon
+
+After making changes, reinstall and restart so the user can test:
+
+```
+uv tool install --reinstall .
+taskpull stop && taskpull start
+```
+
 ## Verifying UI changes
 
 After making a TUI change, always verify it works by capturing the tmux pane:
