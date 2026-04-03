@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
 import secrets
+import shutil
 import ssl
 import subprocess
 from collections.abc import Awaitable, Callable
@@ -13,11 +15,14 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+_CERT_VERSION = "2"
+
+
 def generate_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
     """Generate CA and server certs for the GH proxy.
 
     Returns (ca_cert, ca_key, server_cert, server_key).
-    Skips generation if certs already exist.
+    Skips generation if certs already exist and are up-to-date.
     """
     cert_dir.mkdir(parents=True, exist_ok=True)
 
@@ -25,9 +30,14 @@ def generate_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
     ca_cert = cert_dir / "ca.pem"
     server_key = cert_dir / "server-key.pem"
     server_cert = cert_dir / "server.pem"
+    version_file = cert_dir / "version"
 
     if ca_cert.exists() and server_cert.exists():
-        return ca_cert, ca_key, server_cert, server_key
+        if version_file.exists() and version_file.read_text().strip() == _CERT_VERSION:
+            return ca_cert, ca_key, server_cert, server_key
+        log.info("cert version mismatch, regenerating")
+        shutil.rmtree(cert_dir)
+        cert_dir.mkdir(parents=True, exist_ok=True)
 
     subprocess.run(
         [
@@ -71,7 +81,7 @@ def generate_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
 
     san_conf = cert_dir / "san.cnf"
     san_conf.write_text(
-        "[v3_req]\nsubjectAltName = DNS:host.docker.internal,DNS:api.github.com\n"
+        "[v3_req]\nsubjectAltName = DNS:host.docker.internal,DNS:api.github.com,DNS:github.com\n"
     )
 
     subprocess.run(
@@ -102,6 +112,7 @@ def generate_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
     for name in ["server.csr", "san.cnf", "ca.srl"]:
         (cert_dir / name).unlink(missing_ok=True)
 
+    version_file.write_text(_CERT_VERSION)
     log.info("generated TLS certs in %s", cert_dir)
     return ca_cert, ca_key, server_cert, server_key
 
@@ -222,12 +233,18 @@ class GHProxy:
         if not forwarded_path:
             forwarded_path = "/"
 
+        request_host = headers.get("host", "")
+        if request_host == "github.com" and self._upstream_host == "api.github.com":
+            upstream_host = "github.com"
+        else:
+            upstream_host = self._upstream_host
+
         gh_ssl: ssl.SSLContext | None = ssl.create_default_context()
         if self._upstream_port != 443:
             gh_ssl = None
         try:
             gh_reader, gh_writer = await asyncio.open_connection(
-                self._upstream_host,
+                upstream_host,
                 self._upstream_port,
                 ssl=gh_ssl,
             )
@@ -243,7 +260,7 @@ class GHProxy:
                 forward_headers[k] = v
             if inject_token:
                 forward_headers["authorization"] = f"token {self._gh_token}"
-            forward_headers["host"] = self._upstream_host
+            forward_headers["host"] = upstream_host
             forward_headers["connection"] = "close"
 
             request_bytes = f"{method} {forwarded_path} HTTP/1.1\r\n".encode()
@@ -292,9 +309,21 @@ class GHProxy:
                 headers[key.strip().lower()] = value.strip()
 
         body = b""
-        content_length = int(headers.get("content-length", "0"))
-        if content_length > 0:
-            body = await reader.readexactly(content_length)
+        if "chunked" in headers.get("transfer-encoding", ""):
+            chunks = bytearray()
+            while True:
+                size_line = await reader.readline()
+                size = int(size_line.strip(), 16)
+                if size == 0:
+                    await reader.readline()
+                    break
+                chunks += await reader.readexactly(size)
+                await reader.readline()
+            body = bytes(chunks)
+        else:
+            content_length = int(headers.get("content-length", "0"))
+            if content_length > 0:
+                body = await reader.readexactly(content_length)
 
         return method, path, headers, body
 
@@ -358,6 +387,13 @@ class GHProxy:
             return auth[len("token ") :]
         if auth.startswith("Bearer "):
             return auth[len("Bearer ") :]
+        if auth.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth[len("Basic ") :]).decode()
+                if ":" in decoded:
+                    return decoded.split(":", 1)[1]
+            except Exception:
+                pass
         return None
 
     @staticmethod
@@ -383,6 +419,19 @@ class GHProxy:
             query = data.get("query", "") if isinstance(data, dict) else ""
             if re.search(r"\bmutation\b", query, re.IGNORECASE):
                 return False, "GraphQL mutations are blocked", False
+            return True, "", True
+
+        git_match = re.match(
+            r"/([^/]+/[^/]+?)(?:\.git)?/(info/refs|git-(?:upload|receive)-pack)",
+            clean,
+        )
+        if git_match:
+            request_repo = git_match.group(1)
+            operation = git_match.group(2)
+            if "receive-pack" in operation and method == "POST":
+                if request_repo.lower() == allowed_repo.lower():
+                    return True, "", True
+                return True, "", False
             return True, "", True
 
         if method in ("POST", "PUT", "PATCH", "DELETE"):

@@ -135,6 +135,8 @@ async def launch_session(
             [
                 "--add-host",
                 "api.github.com:127.0.0.1",
+                "--add-host",
+                "github.com:127.0.0.1",
                 "--sysctl",
                 "net.ipv4.ip_unprivileged_port_start=0",
             ]
@@ -210,6 +212,10 @@ async def launch_session(
             " /workspace/.taskpull-ca.pem"
             " > /tmp/ca-bundle.pem && "
             "export SSL_CERT_FILE=/tmp/ca-bundle.pem && "
+            "git config --global http.sslCAInfo /tmp/ca-bundle.pem && "
+            "git config --global credential.helper "
+            """'!/bin/sh -c "echo username=x-access-token; echo password=\\$GITHUB_TOKEN"' && """
+            'git config --global url."https://github.com/".insteadOf "git@github.com:" && '
         )
         if gh_proxy_port:
             proxy_setup += (

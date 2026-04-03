@@ -7,6 +7,7 @@ then verify permission checks, token injection, and blocking.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import ssl
 import subprocess
@@ -48,8 +49,16 @@ class TestExtractToken:
     def test_no_auth(self):
         assert _extract_token({}) is None
 
-    def test_unknown_scheme(self):
+    def test_basic_auth(self):
+        creds = base64.b64encode(b"x-access-token:mysecret").decode()
+        assert _extract_token({"authorization": f"Basic {creds}"}) == "mysecret"
+
+    def test_basic_auth_malformed(self):
         assert _extract_token({"authorization": "Basic foo"}) is None
+
+    def test_basic_auth_no_colon(self):
+        no_colon = base64.b64encode(b"nocolon").decode()
+        assert _extract_token({"authorization": f"Basic {no_colon}"}) is None
 
 
 class TestCheckPermission:
@@ -112,6 +121,44 @@ class TestCheckPermission:
         allowed, reason, _ = _check_permission("POST", "/graphql", b"not json", "o/r")
         assert allowed is False
         assert "parse" in reason.lower()
+
+    def test_git_upload_pack_allowed(self):
+        allowed, _, inject = _check_permission("GET", "/o/r.git/info/refs", b"", "o/r")
+        assert allowed is True
+        assert inject is True
+
+    def test_git_receive_pack_post_allowed_repo(self):
+        allowed, _, inject = _check_permission(
+            "POST", "/o/r.git/git-receive-pack", b"", "o/r"
+        )
+        assert allowed is True
+        assert inject is True
+
+    def test_git_receive_pack_post_wrong_repo(self):
+        allowed, _, inject = _check_permission(
+            "POST", "/other/repo.git/git-receive-pack", b"", "o/r"
+        )
+        assert allowed is True
+        assert inject is False
+
+    def test_git_path_without_dotgit(self):
+        allowed, _, inject = _check_permission(
+            "POST", "/o/r/git-receive-pack", b"", "o/r"
+        )
+        assert allowed is True
+        assert inject is True
+
+    def test_git_upload_pack_post(self):
+        allowed, _, inject = _check_permission(
+            "POST", "/o/r.git/git-upload-pack", b"", "o/r"
+        )
+        assert allowed is True
+        assert inject is True
+
+    def test_git_receive_pack_get_info_refs(self):
+        allowed, _, inject = _check_permission("GET", "/o/r.git/info/refs", b"", "o/r")
+        assert allowed is True
+        assert inject is True
 
 
 def _generate_localhost_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:

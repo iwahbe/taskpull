@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import ssl
 import subprocess
@@ -208,6 +209,22 @@ async def test_proxy_accepts_registered_token(proxy_server):
         "/api/v3/user",
         ca_cert,
         auth_header=f"token {secret}",
+    )
+    assert not (status == 403 and "Invalid proxy token" in body)
+
+
+@pytest.mark.asyncio
+async def test_proxy_accepts_basic_auth(proxy_server):
+    """Request with Basic auth containing a registered proxy secret passes."""
+    proxy, port, ca_cert = proxy_server
+    secret = proxy.register_task("owner/repo", "test-task")
+
+    creds = base64.b64encode(f"x-access-token:{secret}".encode()).decode()
+    status, body = await _send_https_request(
+        port,
+        "/api/v3/user",
+        ca_cert,
+        auth_header=f"Basic {creds}",
     )
     assert not (status == 403 and "Invalid proxy token" in body)
 
