@@ -143,8 +143,6 @@ def _sync_right_pane(info: dict[str, Any]) -> None:
 def _status_label(info: dict[str, Any]) -> tuple[str, int]:
     """Return (label, curses_color_pair) for a task."""
     status = info.get("status", "idle")
-    pr = info.get("pr_number")
-    pr_draft = info.get("pr_draft", False)
 
     if status == "broken":
         return "broken", 6
@@ -152,10 +150,6 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
         return "done", 3
     if status == "paused":
         return "paused", 4
-    if pr and pr_draft:
-        return f"PR #{pr} (draft)", 4
-    if pr:
-        return f"PR #{pr}", 2
     if status == "active":
         activity = info.get("activity")
         if activity == "idle":

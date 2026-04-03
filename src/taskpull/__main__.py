@@ -55,11 +55,6 @@ def _task_status_label(info: dict[str, Any]) -> str:
     status = state.get("status", "idle")
     if status == "broken":
         return "broken"
-    pr = state.get("pr_number")
-    if pr and state.get("pr_draft"):
-        return f"pr_draft (PR #{pr})"
-    if pr:
-        return f"pr_open (PR #{pr})"
     if status == "active":
         activity = state.get("activity")
         if activity == "idle":
