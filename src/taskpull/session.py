@@ -243,9 +243,22 @@ async def launch_session(
     )
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"docker run failed (rc={proc.returncode}): {stderr.decode().strip()}"
-        )
+        err_msg = stderr.decode().strip()
+        if "is already in use by container" in err_msg:
+            log.warning("container %s already exists, removing and retrying", name)
+            await kill_session(name)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"docker run failed (rc={proc.returncode}): {stderr.decode().strip()}"
+                )
+        else:
+            raise RuntimeError(f"docker run failed (rc={proc.returncode}): {err_msg}")
     log.info("launched container %s", name)
     return name
 
