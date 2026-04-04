@@ -320,7 +320,13 @@ def _draw_sidebar(
         row += 1  # blank line between tasks
 
     # Footer
-    footer = " ⌥ j/k:sel  ⌥ h/l:pane  p:pause  r:resume  R:restart"
+    footer = " ⌥ j/k:sel  ⌥ h/l:pane"
+    if task_list:
+        if task_list[selected][1].get("status") == "paused":
+            footer += "  r:resume"
+        else:
+            footer += "  p:pause"
+    footer += "  R:restart"
     if task_list and task_list[selected][1].get("adhoc") is not None:
         footer += "  X:delete"
     footer += "  q:quit"
@@ -406,21 +412,23 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
 
         elif key == ord("r"):
             if task_list:
-                tid, _info = task_list[selected]
-                try:
-                    send_command("127.0.0.1", ipc_port, "resume", task_id=tid)
-                except (ConnectionRefusedError, OSError):
-                    pass
-                prev_selected = -1
+                tid, info = task_list[selected]
+                if info.get("status") == "paused":
+                    try:
+                        send_command("127.0.0.1", ipc_port, "resume", task_id=tid)
+                    except (ConnectionRefusedError, OSError):
+                        pass
+                    prev_selected = -1
 
         elif key == ord("p"):
             if task_list:
-                tid, _info = task_list[selected]
-                try:
-                    send_command("127.0.0.1", ipc_port, "pause", task_id=tid)
-                except (ConnectionRefusedError, OSError):
-                    pass
-                prev_selected = -1
+                tid, info = task_list[selected]
+                if info.get("status") != "paused":
+                    try:
+                        send_command("127.0.0.1", ipc_port, "pause", task_id=tid)
+                    except (ConnectionRefusedError, OSError):
+                        pass
+                    prev_selected = -1
 
         elif key == ord("R"):
             if task_list:
