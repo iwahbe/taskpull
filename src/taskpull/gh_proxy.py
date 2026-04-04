@@ -12,6 +12,10 @@ import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from graphql import parse as gql_parse
+from graphql.error import GraphQLSyntaxError
+from graphql.language.ast import FieldNode, OperationDefinitionNode, OperationType
+
 log = logging.getLogger(__name__)
 
 
@@ -133,6 +137,22 @@ def parse_github_repo(remote_url: str) -> str:
 
 
 class GHProxy:
+    # GraphQL mutations we allow through the proxy, mapped to the JSON path
+    # within the request's "variables" where the target repositoryId lives.
+    #
+    # Security model:
+    #   - GraphQL *queries* are always allowed (read-only).
+    #   - GraphQL *mutations* are blocked unless the mutation field name
+    #     appears in this allowlist AND the repositoryId in the variables
+    #     resolves (via our node-ID cache) to the task's allowed repo.
+    #   - The node-ID cache is populated by observing GraphQL query responses
+    #     that contain repository objects (id + owner/login + name).  If a
+    #     node ID hasn't been seen yet the mutation is blocked (fail-closed).
+    #   - The cache is per-proxy-token, so one task cannot influence another.
+    _ALLOWED_MUTATIONS: dict[str, tuple[str, ...]] = {
+        "createPullRequest": ("input", "repositoryId"),
+    }
+
     def __init__(
         self,
         gh_token: str,
@@ -154,6 +174,8 @@ class GHProxy:
         self._upstream_port = upstream_port
         self._token_map: dict[str, str] = {}
         self._task_map: dict[str, str] = {}
+        # Per-proxy-token cache: {proxy_token: {node_id: "owner/repo"}}
+        self._repo_node_cache: dict[str, dict[str, str]] = {}
 
     @property
     def ca_cert_path(self) -> Path:
@@ -173,6 +195,7 @@ class GHProxy:
     def unregister_task(self, secret: str) -> None:
         self._token_map.pop(secret, None)
         self._task_map.pop(secret, None)
+        self._repo_node_cache.pop(secret, None)
 
     async def run(self, port: int, shutdown_event: asyncio.Event) -> None:
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -221,7 +244,7 @@ class GHProxy:
                 return
 
             allowed, reason, inject_token = self._check_permission(
-                method, path, body, allowed_repo
+                method, path, body, allowed_repo, proxy_token
             )
             if not allowed:
                 log.warning("GH proxy blocked: %s %s — %s", method, path, reason)
@@ -280,17 +303,33 @@ class GHProxy:
             gh_writer.write(request_bytes)
             await gh_writer.drain()
 
-            raw, status_code, body = await self._read_response(gh_reader)
+            raw, status_code, response_body = await self._read_response(gh_reader)
             writer.write(raw)
             await writer.drain()
 
             log.info("GH proxy: %s %s -> forwarded (%d)", method, path, status_code)
 
+            if (
+                forwarded_path == "/graphql"
+                and method == "POST"
+                and status_code == 200
+                and proxy_token
+            ):
+                self._cache_repo_node_ids(proxy_token, response_body)
+
             await self._maybe_notify_pr_created(
-                method, forwarded_path, status_code, body, proxy_token or ""
+                method, forwarded_path, status_code, response_body, proxy_token or ""
             )
             await self._maybe_notify_issue_created(
-                method, forwarded_path, status_code, body, proxy_token or ""
+                method, forwarded_path, status_code, response_body, proxy_token or ""
+            )
+            await self._maybe_notify_graphql_pr_created(
+                method,
+                forwarded_path,
+                status_code,
+                body,
+                response_body,
+                proxy_token or "",
             )
         finally:
             gh_writer.close()
@@ -407,11 +446,31 @@ class GHProxy:
         return None
 
     @staticmethod
+    def _extract_graphql_mutation_fields(query: str) -> list[str] | None:
+        """Parse a GraphQL query and return mutation field names, or None for queries.
+
+        Raises GraphQLSyntaxError if the query cannot be parsed.
+        """
+        doc = gql_parse(query)
+        for defn in doc.definitions:
+            if (
+                isinstance(defn, OperationDefinitionNode)
+                and defn.operation == OperationType.MUTATION
+            ):
+                return [
+                    sel.name.value
+                    for sel in defn.selection_set.selections
+                    if isinstance(sel, FieldNode)
+                ]
+        return None
+
     def _check_permission(
+        self,
         method: str,
         path: str,
         body: bytes,
         allowed_repo: str,
+        proxy_token: str,
     ) -> tuple[bool, str, bool]:
         """Check if the request is allowed.
 
@@ -427,8 +486,43 @@ class GHProxy:
             except (json.JSONDecodeError, UnicodeDecodeError):
                 return False, "Cannot parse GraphQL body", False
             query = data.get("query", "") if isinstance(data, dict) else ""
-            if re.search(r"\bmutation\b", query, re.IGNORECASE):
-                return False, "GraphQL mutations are blocked", False
+
+            try:
+                mutation_fields = self._extract_graphql_mutation_fields(query)
+            except GraphQLSyntaxError:
+                return False, "Cannot parse GraphQL query", False
+
+            if mutation_fields is None:
+                return True, "", True
+
+            for field in mutation_fields:
+                if field not in self._ALLOWED_MUTATIONS:
+                    return False, f"GraphQL mutation '{field}' is not allowed", False
+
+            variables = data.get("variables", {}) or {}
+            for field in mutation_fields:
+                id_path = self._ALLOWED_MUTATIONS[field]
+                node_id: object = variables
+                for key in id_path:
+                    if isinstance(node_id, dict):
+                        node_id = node_id.get(key)
+                    else:
+                        node_id = None
+                        break
+                if not isinstance(node_id, str):
+                    return False, f"Missing repositoryId for mutation '{field}'", False
+
+                token_cache = self._repo_node_cache.get(proxy_token, {})
+                cached_repo = token_cache.get(node_id)
+                if cached_repo is None:
+                    return False, f"Unknown repository node ID: {node_id}", False
+                if cached_repo.lower() != allowed_repo.lower():
+                    return (
+                        False,
+                        f"Mutation targets repo '{cached_repo}', not '{allowed_repo}'",
+                        False,
+                    )
+
             return True, "", True
 
         git_match = re.match(
@@ -509,6 +603,79 @@ class GHProxy:
             return
         log.info("GH proxy: detected issue #%d for task %s", issue_number, task_id)
         await self._on_issue_created(task_id, issue_number, issue_url)
+
+    async def _maybe_notify_graphql_pr_created(
+        self,
+        method: str,
+        path: str,
+        status_code: int,
+        request_body: bytes,
+        response_body: bytes,
+        proxy_token: str,
+    ) -> None:
+        if self._on_pr_created is None:
+            return
+        if method != "POST" or status_code != 200:
+            return
+        if path != "/graphql":
+            return
+
+        try:
+            req_data = json.loads(request_body)
+            query = req_data.get("query", "")
+            mutation_fields = self._extract_graphql_mutation_fields(query)
+            if mutation_fields is None or "createPullRequest" not in mutation_fields:
+                return
+        except (json.JSONDecodeError, GraphQLSyntaxError, UnicodeDecodeError):
+            return
+
+        task_id = self._task_map.get(proxy_token)
+        if not task_id:
+            return
+
+        try:
+            resp_data = json.loads(response_body)
+            pr_data = resp_data["data"]["createPullRequest"]["pullRequest"]
+            pr_number = pr_data["number"]
+            pr_url = pr_data["url"]
+        except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError):
+            log.warning("GH proxy: failed to parse GraphQL PR creation response")
+            return
+
+        log.info("GH proxy: detected GraphQL PR #%d for task %s", pr_number, task_id)
+        await self._on_pr_created(task_id, pr_number, pr_url)
+
+    def _cache_repo_node_ids(self, proxy_token: str, response_body: bytes) -> None:
+        try:
+            data = json.loads(response_body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return
+        if isinstance(data, dict):
+            self._walk_for_repo_nodes(proxy_token, data)
+
+    def _walk_for_repo_nodes(self, proxy_token: str, obj: dict) -> None:
+        node_id = obj.get("id")
+        name = obj.get("name")
+        owner = obj.get("owner")
+        if (
+            isinstance(node_id, str)
+            and node_id.startswith("R_")
+            and isinstance(name, str)
+            and isinstance(owner, dict)
+            and isinstance(owner.get("login"), str)
+        ):
+            owner_repo = f"{owner['login']}/{name}"
+            cache = self._repo_node_cache.setdefault(proxy_token, {})
+            cache[node_id] = owner_repo
+            log.debug("Cached repo node %s -> %s", node_id, owner_repo)
+
+        for v in obj.values():
+            if isinstance(v, dict):
+                self._walk_for_repo_nodes(proxy_token, v)
+            elif isinstance(v, list):
+                for item in v:
+                    if isinstance(item, dict):
+                        self._walk_for_repo_nodes(proxy_token, item)
 
     @staticmethod
     async def _send_error(

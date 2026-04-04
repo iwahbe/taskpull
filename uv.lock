@@ -173,6 +173,15 @@ wheels = [
 ]
 
 [[package]]
+name = "graphql-core"
+version = "3.2.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/68/c5/36aa96205c3ecbb3d34c7c24189e4553c7ca2ebc7e1dd07432339b980272/graphql_core-3.2.8.tar.gz", hash = "sha256:015457da5d996c924ddf57a43f4e959b0b94fb695b85ed4c29446e508ed65cf3", size = 513181 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/41/cb887d9afc5dabd78feefe6ccbaf83ff423c206a7a1b7aeeac05120b2125/graphql_core-3.2.8-py3-none-any.whl", hash = "sha256:cbee07bee1b3ed5e531723685369039f32ff815ef60166686e0162f540f1520c", size = 207349 },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -804,6 +813,7 @@ name = "taskpull"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "graphql-core" },
     { name = "keyring" },
     { name = "mcp" },
     { name = "setproctitle" },
@@ -819,6 +829,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "graphql-core", specifier = ">=3.2" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "setproctitle", specifier = ">=1.3" },

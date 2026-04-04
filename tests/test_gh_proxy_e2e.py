@@ -17,7 +17,6 @@ import pytest
 
 from taskpull.gh_proxy import GHProxy, parse_github_repo
 
-_check_permission = GHProxy._check_permission
 _extract_token = GHProxy._extract_token
 
 
@@ -62,101 +61,155 @@ class TestExtractToken:
 
 
 class TestCheckPermission:
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path: Path):
+        cert_dir = tmp_path / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+        self.proxy = GHProxy("fake-gh-token", ca_cert, server_cert, server_key)
+        self.token = self.proxy.register_task("o/r", "test-task")
+
+    def _check(self, method, path, body, allowed_repo):
+        return self.proxy._check_permission(
+            method, path, body, allowed_repo, self.token
+        )
+
     def test_get_allowed(self):
-        allowed, _, inject = _check_permission("GET", "/repos/o/r/issues", b"", "o/r")
+        allowed, _, inject = self._check("GET", "/repos/o/r/issues", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_post_to_allowed_repo(self):
-        allowed, _, inject = _check_permission("POST", "/repos/o/r/issues", b"", "o/r")
+        allowed, _, inject = self._check("POST", "/repos/o/r/issues", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_post_to_wrong_repo(self):
-        allowed, _, inject = _check_permission(
-            "POST", "/repos/other/repo/issues", b"", "o/r"
-        )
+        allowed, _, inject = self._check("POST", "/repos/other/repo/issues", b"", "o/r")
         assert allowed is True
         assert inject is False
 
     def test_post_to_non_repo_endpoint(self):
-        allowed, _, inject = _check_permission("POST", "/user/repos", b"", "o/r")
+        allowed, _, inject = self._check("POST", "/user/repos", b"", "o/r")
         assert allowed is True
         assert inject is False
 
     def test_graphql_query_allowed(self):
         body = json.dumps({"query": "{ viewer { login } }"}).encode()
-        allowed, _, inject = _check_permission("POST", "/graphql", body, "o/r")
+        allowed, _, inject = self._check("POST", "/graphql", body, "o/r")
         assert allowed is True
         assert inject is True
 
-    def test_graphql_mutation_blocked(self):
+    def test_graphql_non_allowlisted_mutation_blocked(self):
         body = json.dumps({"query": "mutation { createIssue { id } }"}).encode()
-        allowed, reason, _ = _check_permission("POST", "/graphql", body, "o/r")
+        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
-        assert "mutation" in reason.lower()
+        assert "createIssue" in reason
+
+    def test_graphql_allowlisted_mutation_with_valid_node_id(self):
+        self.proxy._repo_node_cache[self.token] = {"R_abc123": "o/r"}
+        body = json.dumps(
+            {
+                "query": "mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }",
+                "variables": {"input": {"repositoryId": "R_abc123"}},
+            }
+        ).encode()
+        allowed, _, inject = self._check("POST", "/graphql", body, "o/r")
+        assert allowed is True
+        assert inject is True
+
+    def test_graphql_allowlisted_mutation_with_unknown_node_id(self):
+        body = json.dumps(
+            {
+                "query": "mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }",
+                "variables": {"input": {"repositoryId": "R_unknown"}},
+            }
+        ).encode()
+        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        assert allowed is False
+        assert "Unknown repository node ID" in reason
+
+    def test_graphql_allowlisted_mutation_with_wrong_repo_node_id(self):
+        self.proxy._repo_node_cache[self.token] = {"R_abc123": "other/repo"}
+        body = json.dumps(
+            {
+                "query": "mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }",
+                "variables": {"input": {"repositoryId": "R_abc123"}},
+            }
+        ).encode()
+        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        assert allowed is False
+        assert "other/repo" in reason
+
+    def test_graphql_allowlisted_mutation_missing_repo_id(self):
+        body = json.dumps(
+            {
+                "query": "mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }",
+                "variables": {"input": {}},
+            }
+        ).encode()
+        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        assert allowed is False
+        assert "Missing repositoryId" in reason
 
     def test_api_v3_prefix_stripped(self):
-        allowed, _, inject = _check_permission(
-            "POST", "/api/v3/repos/o/r/pulls", b"", "o/r"
-        )
+        allowed, _, inject = self._check("POST", "/api/v3/repos/o/r/pulls", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_case_insensitive_repo_match(self):
-        allowed, _, inject = _check_permission(
+        allowed, _, inject = self._check(
             "POST", "/repos/Owner/Repo/issues", b"", "owner/repo"
         )
         assert allowed is True
         assert inject is True
 
     def test_delete_to_allowed_repo(self):
-        allowed, _, inject = _check_permission(
-            "DELETE", "/repos/o/r/issues/1", b"", "o/r"
-        )
+        allowed, _, inject = self._check("DELETE", "/repos/o/r/issues/1", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_graphql_unparseable_body(self):
-        allowed, reason, _ = _check_permission("POST", "/graphql", b"not json", "o/r")
+        allowed, reason, _ = self._check("POST", "/graphql", b"not json", "o/r")
+        assert allowed is False
+        assert "parse" in reason.lower()
+
+    def test_graphql_unparseable_query(self):
+        body = json.dumps({"query": "not valid graphql {{{"}).encode()
+        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
         assert "parse" in reason.lower()
 
     def test_git_upload_pack_allowed(self):
-        allowed, _, inject = _check_permission("GET", "/o/r.git/info/refs", b"", "o/r")
+        allowed, _, inject = self._check("GET", "/o/r.git/info/refs", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_git_receive_pack_post_allowed_repo(self):
-        allowed, _, inject = _check_permission(
+        allowed, _, inject = self._check(
             "POST", "/o/r.git/git-receive-pack", b"", "o/r"
         )
         assert allowed is True
         assert inject is True
 
     def test_git_receive_pack_post_wrong_repo(self):
-        allowed, _, inject = _check_permission(
+        allowed, _, inject = self._check(
             "POST", "/other/repo.git/git-receive-pack", b"", "o/r"
         )
         assert allowed is True
         assert inject is False
 
     def test_git_path_without_dotgit(self):
-        allowed, _, inject = _check_permission(
-            "POST", "/o/r/git-receive-pack", b"", "o/r"
-        )
+        allowed, _, inject = self._check("POST", "/o/r/git-receive-pack", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_git_upload_pack_post(self):
-        allowed, _, inject = _check_permission(
-            "POST", "/o/r.git/git-upload-pack", b"", "o/r"
-        )
+        allowed, _, inject = self._check("POST", "/o/r.git/git-upload-pack", b"", "o/r")
         assert allowed is True
         assert inject is True
 
     def test_git_receive_pack_get_info_refs(self):
-        allowed, _, inject = _check_permission("GET", "/o/r.git/info/refs", b"", "o/r")
+        allowed, _, inject = self._check("GET", "/o/r.git/info/refs", b"", "o/r")
         assert allowed is True
         assert inject is True
 
@@ -250,12 +303,16 @@ def _generate_localhost_certs(cert_dir: Path) -> tuple[Path, Path, Path, Path]:
     return ca_cert, ca_key, server_cert, server_key
 
 
-async def _fake_github_server() -> tuple[asyncio.Server, int, list[dict]]:
+async def _fake_github_server(
+    responses: list[tuple[int, dict]] | None = None,
+) -> tuple[asyncio.Server, int, list[dict]]:
     """Start a plain TCP server that acts as a fake GitHub API.
 
-    Records received requests and returns 200 OK with a JSON body.
+    Records received requests and returns responses from the given list
+    (popping from the front), or 200 {"status": "ok"} by default.
     """
     received: list[dict] = []
+    pending = list(responses) if responses else []
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         request_line = await reader.readline()
@@ -290,10 +347,16 @@ async def _fake_github_server() -> tuple[asyncio.Server, int, list[dict]]:
             }
         )
 
-        response_body = json.dumps({"status": "ok"}).encode()
+        if pending:
+            status_code, resp_json = pending.pop(0)
+        else:
+            status_code, resp_json = 200, {"status": "ok"}
+
+        reason = {200: "OK", 201: "Created", 403: "Forbidden"}.get(status_code, "OK")
+        response_body = json.dumps(resp_json).encode()
         response = (
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: application/json\r\n"
+            f"HTTP/1.1 {status_code} {reason}\r\n".encode()
+            + b"Content-Type: application/json\r\n"
             + f"Content-Length: {len(response_body)}\r\n".encode()
             + b"Connection: close\r\n"
             + b"\r\n"
@@ -516,7 +579,7 @@ async def test_proxy_blocks_graphql_mutation(tmp_path: Path):
         )
 
     assert status == 403
-    assert "mutation" in body.lower()
+    assert "createIssue" in body
     assert len(received) == 0
 
 
@@ -605,3 +668,115 @@ async def test_proxy_uses_basic_auth_for_git_host(tmp_path: Path):
     assert len(received) == 1
     expected_creds = base64.b64encode(b"x-access-token:real-gh-token").decode()
     assert received[0]["headers"]["authorization"] == f"Basic {expected_creds}"
+
+
+@pytest.mark.asyncio
+async def test_proxy_graphql_query_caches_node_id_for_mutation(tmp_path: Path):
+    """A GraphQL query response caches the repo node ID so a subsequent
+    createPullRequest mutation is allowed and forwarded."""
+    cert_dir = tmp_path / "certs"
+    ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+    query_response = {
+        "data": {
+            "repository": {
+                "id": "R_test123",
+                "name": "repo",
+                "owner": {"login": "owner"},
+                "defaultBranchRef": {"name": "main"},
+            }
+        }
+    }
+    mutation_response = {
+        "data": {
+            "createPullRequest": {
+                "pullRequest": {
+                    "id": "PR_abc",
+                    "number": 99,
+                    "url": "https://github.com/owner/repo/pull/99",
+                }
+            }
+        }
+    }
+    fake_server, upstream_port, received = await _fake_github_server(
+        responses=[(200, query_response), (200, mutation_response)]
+    )
+
+    pr_results: list[tuple[str, int, str]] = []
+
+    async def on_pr_created(task_id: str, pr_number: int, pr_url: str) -> None:
+        pr_results.append((task_id, pr_number, pr_url))
+
+    proxy = GHProxy(
+        "real-gh-token",
+        ca_cert,
+        server_cert,
+        server_key,
+        on_pr_created=on_pr_created,
+        upstream_host="127.0.0.1",
+        upstream_port=upstream_port,
+    )
+    secret = proxy.register_task("owner/repo", "test-task")
+
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(server_cert, server_key)
+    proxy_server = await asyncio.start_server(
+        proxy._handle_connection,
+        "127.0.0.1",
+        0,
+        ssl=ssl_ctx,
+    )
+    proxy_port = proxy_server.sockets[0].getsockname()[1]
+
+    query_body = json.dumps(
+        {
+            "query": "query RepositoryInfo($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id name owner { login } } }",
+            "variables": {"owner": "owner", "name": "repo"},
+        }
+    ).encode()
+
+    mutation_body = json.dumps(
+        {
+            "query": "mutation CreatePullRequest($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id number url } } }",
+            "variables": {
+                "input": {
+                    "repositoryId": "R_test123",
+                    "title": "test",
+                    "body": "test",
+                    "headRefName": "feature",
+                    "baseRefName": "main",
+                }
+            },
+        }
+    ).encode()
+
+    async with fake_server, proxy_server:
+        # Step 1: GraphQL query that returns repo info (caches node ID)
+        status, _ = await _send_proxy_request(
+            proxy_port,
+            ca_cert,
+            "POST",
+            "/graphql",
+            auth_header=f"token {secret}",
+            body=query_body,
+        )
+        assert status == 200
+
+        # Step 2: GraphQL mutation that uses the cached node ID
+        status, body = await _send_proxy_request(
+            proxy_port,
+            ca_cert,
+            "POST",
+            "/graphql",
+            auth_header=f"token {secret}",
+            body=mutation_body,
+        )
+        assert status == 200
+
+    assert len(received) == 2
+    assert received[0]["headers"]["authorization"] == "token real-gh-token"
+    assert received[1]["headers"]["authorization"] == "token real-gh-token"
+
+    assert pr_results == [
+        ("test-task", 99, "https://github.com/owner/repo/pull/99"),
+    ]

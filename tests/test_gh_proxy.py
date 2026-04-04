@@ -487,3 +487,101 @@ async def test_read_response_complete_parses_correctly():
         assert status_code == 201
         assert body == b"hello!"
         assert raw == response_bytes
+
+
+@pytest.mark.asyncio
+async def test_graphql_pr_created_callback_fires():
+    """_maybe_notify_graphql_pr_created fires when a createPullRequest mutation succeeds."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_pr_created(task_id: str, pr_number: int, pr_url: str) -> None:
+            results.append((task_id, pr_number, pr_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_pr_created=on_pr_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        request_body = json.dumps(
+            {
+                "query": "mutation CreatePullRequest($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id number url } } }",
+                "variables": {"input": {"repositoryId": "R_abc"}},
+            }
+        ).encode()
+        response_body = json.dumps(
+            {
+                "data": {
+                    "createPullRequest": {
+                        "pullRequest": {
+                            "id": "PR_abc",
+                            "number": 42,
+                            "url": "https://github.com/owner/repo/pull/42",
+                        }
+                    }
+                }
+            }
+        ).encode()
+
+        await proxy._maybe_notify_graphql_pr_created(
+            "POST", "/graphql", 200, request_body, response_body, secret
+        )
+
+        assert results == [
+            ("my-task", 42, "https://github.com/owner/repo/pull/42"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_graphql_pr_created_callback_skips_non_mutation():
+    """_maybe_notify_graphql_pr_created ignores non-mutation requests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_pr_created(task_id: str, pr_number: int, pr_url: str) -> None:
+            results.append((task_id, pr_number, pr_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_pr_created=on_pr_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        query_body = json.dumps(
+            {
+                "query": "{ viewer { login } }",
+            }
+        ).encode()
+        response_body = json.dumps({"data": {"viewer": {"login": "me"}}}).encode()
+
+        await proxy._maybe_notify_graphql_pr_created(
+            "POST", "/graphql", 200, query_body, response_body, secret
+        )
+        # Wrong status code
+        mutation_body = json.dumps(
+            {
+                "query": "mutation { createPullRequest(input: $input) { pullRequest { id number url } } }",
+            }
+        ).encode()
+        await proxy._maybe_notify_graphql_pr_created(
+            "POST", "/graphql", 403, mutation_body, b"{}", secret
+        )
+        # Wrong path
+        await proxy._maybe_notify_graphql_pr_created(
+            "POST", "/repos/o/r/pulls", 200, mutation_body, b"{}", secret
+        )
+
+        assert results == []
