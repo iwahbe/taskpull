@@ -111,6 +111,6 @@ taskpull --user-dir /path/to/dir start
 
 ## State
 
-`~/.taskpull/state.json` tracks active tasks, PR numbers, session IDs, and run counts. Managed by the supervisor. You can manually edit it to reset `exhaust_count` or change status. Exhausted tasks are re-checked with exponential backoff (2x per cycle, capped at 24x the base poll interval).
+`~/.taskpull/state.json` tracks active tasks, PR numbers, session IDs, and run counts. Managed by the supervisor. You can manually edit it to reset `exhaust_count` or change status. Exhausted tasks are re-checked with exponential backoff (2x per cycle, capped at 288x the base poll interval).
 
 `~/.taskpull/events/` contains per-task JSONL files written by Claude Code hooks. These are consumed and cleared by the supervisor during each poll cycle.

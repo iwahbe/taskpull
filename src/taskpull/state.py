@@ -49,7 +49,7 @@ class TaskState:
     def exhaust_backoff(self, poll_interval: int) -> float:
         if self.exhaust_count <= 0:
             return 0
-        multiplier = min(2**self.exhaust_count, 24)
+        multiplier = min(2**self.exhaust_count, 288)
         return multiplier * poll_interval
 
     def setup_retry_backoff(self, poll_interval: int) -> float:

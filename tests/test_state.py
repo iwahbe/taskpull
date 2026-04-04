@@ -88,9 +88,9 @@ class TestExhaustBackoff:
         ts = TaskState(exhaust_count=3)
         assert ts.exhaust_backoff(300) == 8 * 300
 
-    def test_capped_at_24x(self):
+    def test_capped_at_288x(self):
         ts = TaskState(exhaust_count=100)
-        assert ts.exhaust_backoff(300) == 24 * 300
+        assert ts.exhaust_backoff(300) == 288 * 300
 
 
 class TestSetupRetryBackoff:
