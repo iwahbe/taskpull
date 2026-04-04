@@ -96,3 +96,6 @@ async def cleanup_workspace(workspace: Path | None) -> None:
     wp = Path(workspace)
     if wp.exists():
         shutil.rmtree(wp, ignore_errors=True)
+    staging = wp.with_name(wp.name + "-taskpull")
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)

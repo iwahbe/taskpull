@@ -13,6 +13,7 @@ from typing import Protocol
 log = logging.getLogger(__name__)
 
 _PROMPT_FILENAME = ".taskpull-prompt.txt"
+_STAGING_MOUNT = "/opt/taskpull"
 
 
 _PROJECT_DIR = Path("/Users/ianwahbe/Projects/taskpull")
@@ -103,6 +104,20 @@ _CLAUDE_SETTINGS = json.dumps(
 )
 
 
+async def _host_git_config(key: str) -> str:
+    """Read a git config value from the host system."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "config",
+        "--get",
+        key,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return stdout.decode().strip() if proc.returncode == 0 else ""
+
+
 async def launch_session(
     name: str,
     workspace: Path,
@@ -115,11 +130,21 @@ async def launch_session(
     ca_cert: Path | None,
     gh_proxy_port: int,
 ) -> str:
-    prompt_file = workspace / _PROMPT_FILENAME
+    # Staging directory for taskpull utility files, kept out of the workspace
+    # so they don't pollute the git checkout.
+    staging = workspace.with_name(workspace.name + "-taskpull")
+    staging.mkdir(parents=True, exist_ok=True)
+
+    prompt_file = staging / _PROMPT_FILENAME
     prompt_file.write_text(prompt)
 
     if ca_cert:
-        shutil.copy2(str(ca_cert), workspace / ".taskpull-ca.pem")
+        shutil.copy2(str(ca_cert), staging / ".taskpull-ca.pem")
+
+    git_user_name, git_user_email = await asyncio.gather(
+        _host_git_config("user.name"),
+        _host_git_config("user.email"),
+    )
 
     home = Path.home()
     cmd = [
@@ -145,6 +170,8 @@ async def launch_session(
         [
             "-v",
             f"{workspace}:/workspace",
+            "-v",
+            f"{staging}:{_STAGING_MOUNT}",
             "-v",
             f"{home / '.claude'}:/home/worker/.claude",
         ]
@@ -172,9 +199,9 @@ async def launch_session(
         "--remote-control "
         f"--name '{task_id} (run {run_count})' "
         f"--mcp-config /workspace/{mcp_rel!s} "
-        f"< /workspace/{_PROMPT_FILENAME}\n"
+        f"< {_STAGING_MOUNT}/{_PROMPT_FILENAME}\n"
     )
-    claude_script_path = workspace / ".taskpull-run.sh"
+    claude_script_path = staging / ".taskpull-run.sh"
     claude_script_path.write_text(claude_script)
     claude_script_path.chmod(0o755)
 
@@ -188,7 +215,7 @@ async def launch_session(
         "unbind-key -T copy-mode MouseDrag1Pane\n"
         "unbind-key -T copy-mode-vi MouseDrag1Pane\n"
     )
-    tmux_conf_path = workspace / ".taskpull-tmux.conf"
+    tmux_conf_path = staging / ".taskpull-tmux.conf"
     tmux_conf_path.write_text(tmux_conf)
 
     claude_json = json.dumps(
@@ -205,11 +232,17 @@ async def launch_session(
         }
     )
 
+    git_config_setup = ""
+    if git_user_name:
+        git_config_setup += f"git config --global user.name '{git_user_name}' && "
+    if git_user_email:
+        git_config_setup += f"git config --global user.email '{git_user_email}' && "
+
     proxy_setup = ""
     if ca_cert:
         proxy_setup = (
             "cat /etc/ssl/certs/ca-certificates.crt"
-            " /workspace/.taskpull-ca.pem"
+            f" {_STAGING_MOUNT}/.taskpull-ca.pem"
             " > /tmp/ca-bundle.pem && "
             "export SSL_CERT_FILE=/tmp/ca-bundle.pem && "
             "git config --global http.sslCAInfo /tmp/ca-bundle.pem && "
@@ -227,10 +260,11 @@ async def launch_session(
 
     bash_script = (
         "cd /workspace && "
+        f"{git_config_setup}"
         f"{proxy_setup}"
         f"echo '{claude_json}' > ~/.claude.json && "
-        "cp /workspace/.taskpull-tmux.conf ~/.tmux.conf && "
-        "tmux new-session -d -s claude /workspace/.taskpull-run.sh && "
+        f"cp {_STAGING_MOUNT}/.taskpull-tmux.conf ~/.tmux.conf && "
+        f"tmux new-session -d -s claude {_STAGING_MOUNT}/.taskpull-run.sh && "
         "tail -f /dev/null"
     )
 
