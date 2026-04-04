@@ -295,10 +295,14 @@ def _draw_sidebar(
         row += 1  # blank line between tasks
 
     # Footer
+    footer = " ⌥ j/k:sel  ⌥ h/l:pane  p:pause  r:resume  R:restart"
+    if task_list and task_list[selected][1].get("adhoc") is not None:
+        footer += "  X:delete"
+    footer += "  q:quit"
     stdscr.addnstr(
         footer_row,
         0,
-        " ⌥ j/k:sel  ⌥ h/l:pane  p:pause  r:resume  R:restart  q:quit",
+        footer,
         usable_x,
         curses.color_pair(5),
     )
@@ -401,3 +405,13 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
                 except (ConnectionRefusedError, OSError):
                     pass
                 prev_selected = -1
+
+        elif key == ord("X"):
+            if task_list:
+                tid, info = task_list[selected]
+                if info.get("adhoc") is not None:
+                    try:
+                        send_command("127.0.0.1", ipc_port, "delete_task", task_id=tid)
+                    except (ConnectionRefusedError, OSError):
+                        pass
+                    prev_selected = -1

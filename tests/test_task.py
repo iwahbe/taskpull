@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from taskpull.task import TaskFile, discover_tasks, parse_task, task_id_from_path
+from taskpull.task import (
+    TaskFile,
+    discover_md_tasks,
+    discover_tasks,
+    parse_task,
+    task_id_from_path,
+)
 
 
 class TestParseTask:
@@ -63,7 +69,7 @@ class TestParseTask:
         assert task.prompt == "Line 1\n\nLine 3"
 
 
-class TestDiscoverTasks:
+class TestDiscoverMdTasks:
     def test_finds_markdown_files(self, tmp_path: Path):
         (tmp_path / "a.md").write_text(
             "---\nrepo: https://github.com/o/a\n---\nPrompt A\n"
@@ -71,21 +77,70 @@ class TestDiscoverTasks:
         (tmp_path / "b.md").write_text(
             "---\nrepo: https://github.com/o/b\n---\nPrompt B\n"
         )
-        tasks = discover_tasks(tmp_path)
+        tasks = discover_md_tasks(tmp_path)
         assert set(tasks.keys()) == {"a", "b"}
 
     def test_ignores_dotfiles(self, tmp_path: Path):
         (tmp_path / ".hidden.md").write_text(
             "---\nrepo: https://github.com/o/r\n---\nPrompt\n"
         )
-        tasks = discover_tasks(tmp_path)
+        tasks = discover_md_tasks(tmp_path)
         assert tasks == {}
 
     def test_empty_dir(self, tmp_path: Path):
-        assert discover_tasks(tmp_path) == {}
+        assert discover_md_tasks(tmp_path) == {}
 
     def test_nonexistent_dir(self, tmp_path: Path):
-        assert discover_tasks(tmp_path / "nope") == {}
+        assert discover_md_tasks(tmp_path / "nope") == {}
+
+
+class TestDiscoverTasks:
+    def test_includes_md_tasks(self, tmp_path: Path):
+        (tmp_path / "a.md").write_text(
+            "---\nrepo: https://github.com/o/a\n---\nPrompt A\n"
+        )
+        tasks = discover_tasks(tmp_path, {})
+        assert "a" in tasks
+
+    def test_includes_adhoc_tasks(self, tmp_path: Path):
+        from taskpull.state import TaskState
+
+        state = {
+            "adhoc-foo-123": TaskState(
+                adhoc="do the thing",
+                repo="https://github.com/o/r",
+            ),
+        }
+        tasks = discover_tasks(tmp_path, state)
+        assert tasks == {
+            "adhoc-foo-123": TaskFile(
+                repo="https://github.com/o/r",
+                repeat=False,
+                prompt="do the thing",
+            ),
+        }
+
+    def test_skips_non_adhoc_state(self, tmp_path: Path):
+        from taskpull.state import TaskState
+
+        state = {"file-task": TaskState(repo="https://github.com/o/r")}
+        tasks = discover_tasks(tmp_path, state)
+        assert tasks == {}
+
+    def test_merges_md_and_adhoc(self, tmp_path: Path):
+        from taskpull.state import TaskState
+
+        (tmp_path / "a.md").write_text(
+            "---\nrepo: https://github.com/o/a\n---\nPrompt A\n"
+        )
+        state = {
+            "adhoc-b-123": TaskState(
+                adhoc="Prompt B",
+                repo="https://github.com/o/b",
+            ),
+        }
+        tasks = discover_tasks(tmp_path, state)
+        assert set(tasks.keys()) == {"a", "adhoc-b-123"}
 
 
 class TestTaskIdFromPath:

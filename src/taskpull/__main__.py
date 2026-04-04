@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -224,6 +227,60 @@ def cmd_restart(config, task_name):
     print(f"task {task_name!r} restarted")
 
 
+def _slug_from_repo(repo: str) -> str:
+    """Derive a short slug from a repo URL or local path for use in task IDs."""
+    from .workspace import is_repo_url
+
+    if is_repo_url(repo):
+        m = re.search(r"([^/:]+/[^/:]+?)(?:\.git)?$", repo)
+        if m:
+            return m.group(1).replace("/", "-")
+    return Path(repo).resolve().name
+
+
+def cmd_new(config, location: str, prompt: str):
+    from .workspace import is_repo_url, normalize_location, resolve_local_path
+
+    if location == "git":
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print("error: not in a git repository or no origin remote")
+            sys.exit(1)
+        repo = result.stdout.strip()
+    else:
+        repo = normalize_location(location)
+        if not is_repo_url(repo):
+            local = resolve_local_path(repo)
+            if not local.exists():
+                print(f"error: path does not exist: {local}")
+                sys.exit(1)
+            repo = str(local)
+
+    task_id = f"adhoc-{_slug_from_repo(repo)}-{int(time.time())}"
+
+    _require_daemon(config)
+    try:
+        response = send_command(
+            "127.0.0.1",
+            config.ipc_port,
+            "new_task",
+            task_id=task_id,
+            repo=repo,
+            prompt=prompt,
+        )
+    except ConnectionRefusedError:
+        print("could not connect to daemon")
+        sys.exit(1)
+    if response.get("status") != "ok":
+        print(f"error: {response.get('message', 'unknown error')}")
+        sys.exit(1)
+    print(f"task {task_id!r} created")
+
+
 class _HelpFormatter(argparse.HelpFormatter):
     def _format_action(self, action: argparse.Action) -> str:
         if isinstance(action, argparse._SubParsersAction._ChoicesPseudoAction):
@@ -248,7 +305,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(
         dest="command",
         required=False,
-        metavar="{start,stop,status,list,refresh,restart}",
+        metavar="{start,stop,status,list,refresh,restart,new}",
     )
     subparsers.add_parser("start", help="Start the daemon")
     subparsers.add_parser("stop", help="Stop the daemon")
@@ -259,6 +316,13 @@ def main() -> None:
         "restart", help="Kill a task's session and re-enqueue it"
     )
     restart_parser.add_argument("task_name", help="Name of the task to restart")
+
+    new_parser = subparsers.add_parser("new", help="Create a one-time ad-hoc task")
+    new_parser.add_argument(
+        "location",
+        help="Git repo URL, local path, or 'git' for current repo's origin",
+    )
+    new_parser.add_argument("prompt", help="Task prompt")
 
     ft_parser = subparsers.add_parser("for-task", help=argparse.SUPPRESS)
     ft_sub = ft_parser.add_subparsers(dest="for_task_command", required=True)
@@ -290,6 +354,10 @@ def main() -> None:
 
     if args.command == "restart":
         cmd_restart(config, args.task_name)
+        return
+
+    if args.command == "new":
+        cmd_new(config, args.location, args.prompt)
         return
 
     if args.command is None:

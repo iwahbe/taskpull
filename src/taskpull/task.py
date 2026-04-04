@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .workspace import is_repo_url, resolve_local_path
+
+if TYPE_CHECKING:
+    from .state import TaskState
+
+if TYPE_CHECKING:
+    from .state import TaskState
 
 
 @dataclass(frozen=True)
@@ -62,7 +69,7 @@ def task_id_from_path(path: Path) -> str:
     return path.stem
 
 
-def discover_tasks(tasks_dir: Path) -> dict[str, TaskFile]:
+def discover_md_tasks(tasks_dir: Path) -> dict[str, TaskFile]:
     result: dict[str, TaskFile] = {}
     if not tasks_dir.is_dir():
         return result
@@ -72,13 +79,25 @@ def discover_tasks(tasks_dir: Path) -> dict[str, TaskFile]:
     return result
 
 
+def discover_tasks(tasks_dir: Path, state: dict[str, TaskState]) -> dict[str, TaskFile]:
+    tasks = discover_md_tasks(tasks_dir)
+    for task_id, ts in state.items():
+        if ts.adhoc is not None and ts.repo is not None:
+            tasks[task_id] = TaskFile(
+                repo=ts.repo,
+                repeat=False,
+                prompt=ts.adhoc,
+            )
+    return tasks
+
+
 @dataclass(frozen=True)
 class ValidationResult:
     tasks: dict[str, TaskFile]
     errors: dict[str, str]
 
 
-def validate_tasks(tasks_dir: Path) -> ValidationResult:
+def validate_md_tasks(tasks_dir: Path) -> ValidationResult:
     tasks: dict[str, TaskFile] = {}
     errors: dict[str, str] = {}
     if not tasks_dir.is_dir():

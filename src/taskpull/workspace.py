@@ -25,6 +25,19 @@ async def _run(
     return proc
 
 
+def normalize_location(raw: str) -> str:
+    """Normalize a user-provided location string.
+
+    Prepends ``https://`` when the input looks like a bare domain with a path
+    (e.g. ``github.com/org/repo``).  URLs and local paths pass through as-is.
+    """
+    if is_repo_url(raw):
+        return raw
+    if re.match(r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/", raw):
+        return f"https://{raw}"
+    return raw
+
+
 def is_repo_url(repo: str) -> bool:
     return repo.startswith("https://") or repo.startswith("git@")
 

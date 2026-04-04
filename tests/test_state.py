@@ -32,6 +32,13 @@ class TestTaskStateRoundTrip:
         )
         assert TaskState.from_dict(ts.to_dict()) == ts
 
+    def test_adhoc_round_trip(self):
+        ts = TaskState(
+            adhoc="do the thing",
+            repo="https://github.com/o/r",
+        )
+        assert TaskState.from_dict(ts.to_dict()) == ts
+
     def test_status_serializes_as_string(self):
         ts = TaskState(status=TaskStatus.BROKEN)
         d = ts.to_dict()

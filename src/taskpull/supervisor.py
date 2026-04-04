@@ -16,7 +16,7 @@ from .hooks import write_hooks_config
 from .ipc import run_ipc_server
 from .session import SessionBackend
 from .state import TaskState, TaskStatus, load_state, save_state
-from .task import TaskFile, discover_tasks, validate_tasks
+from .task import TaskFile, discover_tasks, validate_md_tasks
 from .workspace import (
     cleanup_workspace,
     clone_repo,
@@ -189,7 +189,7 @@ async def run(
 
     # Re-register proxy secrets for tasks that survived the daemon restart
     # so that their containers can continue to use the GH proxy.
-    initial_tasks = discover_tasks(config.tasks_dir)
+    initial_tasks = discover_tasks(config.tasks_dir, current_state)
     for task_id, ts in current_state.items():
         if ts.status != TaskStatus.ACTIVE or not ts.proxy_secret:
             continue
@@ -219,7 +219,7 @@ async def run(
                 "tasks": {k: v.to_dict() for k, v in current_state.items()},
             }
         if command == "status":
-            result = validate_tasks(config.tasks_dir)
+            result = validate_md_tasks(config.tasks_dir)
             return {
                 "status": "ok",
                 "tasks": {
@@ -241,9 +241,13 @@ async def run(
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
-            ts.exhaust_count += 1
             await _cleanup_task(ts, gh_proxy, backend)
-            _reset_task(ts)
+            if ts.adhoc is not None:
+                _reset_task(ts)
+                ts.status = TaskStatus.DONE
+            else:
+                ts.exhaust_count += 1
+                _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("task_exhausted received for %s", tid)
@@ -314,6 +318,38 @@ async def run(
                 ts.activity = event["activity"]
             save_state(config.state_file, current_state)
             return {"status": "ok"}
+        if command == "new_task":
+            tid = request.get("task_id", "")
+            repo = request.get("repo", "")
+            prompt = request.get("prompt", "")
+            if not tid or not repo or not prompt:
+                return {
+                    "status": "error",
+                    "message": "task_id, repo, and prompt are required",
+                }
+            if tid in current_state:
+                return {"status": "error", "message": f"task already exists: {tid}"}
+            current_state[tid] = TaskState(adhoc=prompt, repo=repo)
+            save_state(config.state_file, current_state)
+            refresh_event.set()
+            log.info("new_task registered: %s (repo=%s)", tid, repo)
+            return {"status": "ok", "task_id": tid}
+        if command == "delete_task":
+            tid = request.get("task_id", "")
+            ts = current_state.get(tid)
+            if ts is None:
+                return {"status": "error", "message": f"unknown task: {tid}"}
+            if ts.adhoc is None:
+                return {
+                    "status": "error",
+                    "message": "only ad-hoc tasks can be deleted",
+                }
+            await _cleanup_task(ts, gh_proxy, backend)
+            del current_state[tid]
+            save_state(config.state_file, current_state)
+            refresh_event.set()
+            log.info("delete_task: %s removed", tid)
+            return {"status": "ok"}
         return {"status": "error", "message": f"unknown command: {command}"}
 
     loop = asyncio.get_running_loop()
@@ -351,7 +387,7 @@ async def run(
         while not shutdown_event.is_set():
             log.info("--- Poll cycle ---")
 
-            tasks = discover_tasks(config.tasks_dir)
+            tasks = discover_tasks(config.tasks_dir, current_state)
 
             await _phase2_check_prs(current_state, tasks, gh_proxy, backend)
             await _phase3_check_sessions(current_state, gh_proxy, backend)

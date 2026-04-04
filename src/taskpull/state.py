@@ -35,6 +35,10 @@ class TaskState:
     last_launched_at: int = 0
     error_message: str | None = None
     setup_failure_count: int = 0
+    # When set, this is an ad-hoc task created via `taskpull new` and the
+    # value is the task prompt.  None means the task is file-based (prompt
+    # comes from the .md file).
+    adhoc: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
