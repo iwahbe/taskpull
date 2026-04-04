@@ -42,10 +42,7 @@ def cmd_start(config):
 
     write_pid(config)
 
-    try:
-        asyncio.run(run(config, ready_fd, claude_token, DockerBackend()))
-    finally:
-        remove_pid(config)
+    asyncio.run(run(config, ready_fd, claude_token, DockerBackend()))
 
 
 def cmd_stop(config):
