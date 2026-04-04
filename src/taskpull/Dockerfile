@@ -17,11 +17,15 @@ RUN apt-get update && apt-get install -y \
 # Install mise (into /usr/local/bin so it's available to all users)
 RUN curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
-# Install Node.js (via NodeSource) and Claude CLI
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @anthropic-ai/claude-code
+# Create non-root user for running Claude (needed before Claude install)
+RUN useradd -m -s /bin/bash worker \
+    && mkdir -p /workspace \
+    && chown worker:worker /workspace
+
+# Install Claude CLI as worker (installs to /home/worker/.local/bin)
+USER worker
+RUN curl -fsSL https://claude.ai/install.sh | bash
+USER root
 
 # Install GitHub CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -39,11 +43,7 @@ RUN uv tool install /tmp/taskpull*.whl \
     && chmod a+x /root \
     && chmod -R a+rX /root/.local
 
-# Create non-root user for running Claude
-RUN useradd -m -s /bin/bash worker \
-    && mkdir -p /workspace \
-    && chown worker:worker /workspace
-ENV PATH="/root/.local/bin:$PATH"
+ENV PATH="/home/worker/.local/bin:/root/.local/bin:$PATH"
 
 USER worker
 WORKDIR /workspace
