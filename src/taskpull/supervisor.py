@@ -177,8 +177,22 @@ async def run(
         save_state(config.state_file, current_state)
         log.info("PR #%d created for task %s: %s", pr_number, task_id, pr_url)
 
+    async def on_issue_created(task_id: str, issue_number: int, issue_url: str) -> None:
+        ts = current_state.get(task_id)
+        if ts is None:
+            log.warning("Issue created for unknown task %s", task_id)
+            return
+        ts.issues.append({"number": issue_number, "url": issue_url})
+        save_state(config.state_file, current_state)
+        log.info("Issue #%d created for task %s: %s", issue_number, task_id, issue_url)
+
     gh_proxy = GHProxy(
-        gh_token, ca_cert, server_cert, server_key, on_pr_created=on_pr_created
+        gh_token,
+        ca_cert,
+        server_cert,
+        server_key,
+        on_pr_created=on_pr_created,
+        on_issue_created=on_issue_created,
     )
 
     os.write(ready_fd, b"\x00")
@@ -671,6 +685,7 @@ async def _phase4_launch(
             ts.pr_number = None
             ts.pr_url = None
             ts.pr_approved = None
+            ts.issues = []
             ts.activity = "initializing"
             ts.proxy_secret = proxy_secret
 

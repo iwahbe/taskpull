@@ -302,3 +302,188 @@ async def test_pr_created_callback_skips_non_create():
         )
 
         assert results == []
+
+
+@pytest.mark.asyncio
+async def test_issue_created_callback_fires_on_issues_post():
+    """_maybe_notify_issue_created calls the callback for a successful issue create."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_issue_created(
+            task_id: str, issue_number: int, issue_url: str
+        ) -> None:
+            results.append((task_id, issue_number, issue_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_issue_created=on_issue_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        body = json.dumps(
+            {
+                "number": 7,
+                "html_url": "https://github.com/owner/repo/issues/7",
+            }
+        ).encode()
+
+        await proxy._maybe_notify_issue_created(
+            "POST",
+            "/repos/owner/repo/issues",
+            201,
+            body,
+            secret,
+        )
+
+        assert results == [
+            ("my-task", 7, "https://github.com/owner/repo/issues/7"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_issue_created_callback_skips_non_create():
+    """_maybe_notify_issue_created ignores non-issue-create requests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_issue_created(
+            task_id: str, issue_number: int, issue_url: str
+        ) -> None:
+            results.append((task_id, issue_number, issue_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_issue_created=on_issue_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        body = json.dumps(
+            {"number": 1, "html_url": "https://github.com/owner/repo/issues/1"}
+        ).encode()
+
+        # GET should not trigger
+        await proxy._maybe_notify_issue_created(
+            "GET", "/repos/owner/repo/issues", 200, body, secret
+        )
+        # Wrong status code
+        await proxy._maybe_notify_issue_created(
+            "POST", "/repos/owner/repo/issues", 422, body, secret
+        )
+        # Sub-path (e.g. comments on an issue)
+        await proxy._maybe_notify_issue_created(
+            "POST", "/repos/owner/repo/issues/1/comments", 201, body, secret
+        )
+        # Wrong token
+        await proxy._maybe_notify_issue_created(
+            "POST", "/repos/owner/repo/issues", 201, body, "bad-token"
+        )
+
+        assert results == []
+
+
+@pytest.mark.asyncio
+async def test_read_request_eof_mid_headers_does_not_hang():
+    """_read_request returns promptly when EOF arrives mid-headers (no blank line)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+        proxy = GHProxy("fake-gh-token", ca_cert, server_cert, server_key)
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"GET /api/v3/user HTTP/1.1\r\nHost: api.github.com\r\n")
+        reader.feed_eof()
+
+        result = await asyncio.wait_for(proxy._read_request(reader), timeout=1.0)
+
+        assert result == ("GET", "/api/v3/user", {"host": "api.github.com"}, b"")
+
+
+@pytest.mark.asyncio
+async def test_read_response_eof_mid_headers_does_not_hang():
+    """_read_response returns promptly when EOF arrives mid-headers (no blank line)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+        proxy = GHProxy("fake-gh-token", ca_cert, server_cert, server_key)
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n")
+        reader.feed_eof()
+
+        raw, status_code, body = await asyncio.wait_for(
+            proxy._read_response(reader), timeout=1.0
+        )
+
+        assert status_code == 200
+        assert raw == b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        assert body == b""
+
+
+@pytest.mark.asyncio
+async def test_read_request_complete_parses_correctly():
+    """_read_request correctly parses a well-formed HTTP request."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+        proxy = GHProxy("fake-gh-token", ca_cert, server_cert, server_key)
+
+        request_bytes = (
+            b"POST /repos/owner/repo/pulls HTTP/1.1\r\n"
+            b"Host: api.github.com\r\n"
+            b"Content-Length: 4\r\n"
+            b"\r\n"
+            b"body"
+        )
+        reader = asyncio.StreamReader()
+        reader.feed_data(request_bytes)
+        reader.feed_eof()
+
+        result = await asyncio.wait_for(proxy._read_request(reader), timeout=1.0)
+
+        assert result == (
+            "POST",
+            "/repos/owner/repo/pulls",
+            {"host": "api.github.com", "content-length": "4"},
+            b"body",
+        )
+
+
+@pytest.mark.asyncio
+async def test_read_response_complete_parses_correctly():
+    """_read_response correctly parses a well-formed HTTP response."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+        proxy = GHProxy("fake-gh-token", ca_cert, server_cert, server_key)
+
+        response_bytes = (
+            b"HTTP/1.1 201 Created\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 6\r\n"
+            b"\r\n"
+            b"hello!"
+        )
+        reader = asyncio.StreamReader()
+        reader.feed_data(response_bytes)
+        reader.feed_eof()
+
+        raw, status_code, body = await asyncio.wait_for(
+            proxy._read_response(reader), timeout=1.0
+        )
+
+        assert status_code == 201
+        assert body == b"hello!"
+        assert raw == response_bytes

@@ -240,6 +240,23 @@ def _pr_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
     return lines
 
 
+def _issue_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
+    """Return extra lines to display under a task that has created issues.
+
+    Each entry is (text, curses_color_pair).  One line per issue showing the URL.
+    """
+    issues = info.get("issues", [])
+    if not issues:
+        return []
+
+    lines: list[tuple[str, int]] = []
+    for issue in issues:
+        url = issue.get("url")
+        if url:
+            lines.append((f"     {url}", 5))
+    return lines
+
+
 def _draw_sidebar(
     stdscr: curses.window,
     task_list: list[tuple[str, dict[str, Any]]],
@@ -285,6 +302,14 @@ def _draw_sidebar(
         row += 1
 
         for detail_text, detail_color in _pr_detail_lines(info):
+            if row >= footer_row - 1:
+                break
+            stdscr.addnstr(
+                row, 0, detail_text, usable_x, curses.color_pair(detail_color)
+            )
+            row += 1
+
+        for detail_text, detail_color in _issue_detail_lines(info):
             if row >= footer_row - 1:
                 break
             stdscr.addnstr(

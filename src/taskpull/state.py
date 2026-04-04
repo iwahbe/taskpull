@@ -4,7 +4,7 @@ import enum
 import json
 import tempfile
 import time
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,7 @@ class TaskState:
     # value is the task prompt.  None means the task is file-based (prompt
     # comes from the .md file).
     adhoc: str | None = None
+    issues: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

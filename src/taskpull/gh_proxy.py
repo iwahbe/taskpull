@@ -140,6 +140,7 @@ class GHProxy:
         server_cert: Path,
         server_key: Path,
         on_pr_created: Callable[[str, int, str], Awaitable[None]] | None = None,
+        on_issue_created: Callable[[str, int, str], Awaitable[None]] | None = None,
         upstream_host: str = "api.github.com",
         upstream_port: int = 443,
     ):
@@ -148,6 +149,7 @@ class GHProxy:
         self._server_key = server_key
         self._ca_cert = ca_cert
         self._on_pr_created = on_pr_created
+        self._on_issue_created = on_issue_created
         self._upstream_host = upstream_host
         self._upstream_port = upstream_port
         self._token_map: dict[str, str] = {}
@@ -287,6 +289,9 @@ class GHProxy:
             await self._maybe_notify_pr_created(
                 method, forwarded_path, status_code, body, proxy_token or ""
             )
+            await self._maybe_notify_issue_created(
+                method, forwarded_path, status_code, body, proxy_token or ""
+            )
         finally:
             gh_writer.close()
             await gh_writer.wait_closed()
@@ -355,7 +360,7 @@ class GHProxy:
                 content_length = int(lower.split(":", 1)[1].strip())
             if lower.startswith("transfer-encoding:") and "chunked" in lower:
                 chunked = True
-            if line in (b"\r\n", b"\n"):
+            if line in (b"\r\n", b"\n", b""):
                 break
 
         body = bytearray()
@@ -477,6 +482,33 @@ class GHProxy:
             return
         log.info("GH proxy: detected PR #%d for task %s", pr_number, task_id)
         await self._on_pr_created(task_id, pr_number, pr_url)
+
+    async def _maybe_notify_issue_created(
+        self,
+        method: str,
+        path: str,
+        status_code: int,
+        body: bytes,
+        proxy_token: str,
+    ) -> None:
+        if self._on_issue_created is None:
+            return
+        if method != "POST" or status_code != 201:
+            return
+        if not re.match(r"/repos/[^/]+/[^/]+/issues$", path):
+            return
+        task_id = self._task_map.get(proxy_token)
+        if not task_id:
+            return
+        try:
+            data = json.loads(body)
+            issue_number = data["number"]
+            issue_url = data["html_url"]
+        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+            log.warning("GH proxy: failed to parse issue creation response")
+            return
+        log.info("GH proxy: detected issue #%d for task %s", issue_number, task_id)
+        await self._on_issue_created(task_id, issue_number, issue_url)
 
     @staticmethod
     async def _send_error(
