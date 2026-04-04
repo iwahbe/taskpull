@@ -565,12 +565,17 @@ async def _phase4_launch(
                     task.repo,
                     ts.run_count,
                 )
-                ws = await clone_repo(
-                    config.workspace_dir,
-                    task.repo,
-                    task_id,
-                    ts.run_count,
-                )
+                try:
+                    ws = await clone_repo(
+                        config.workspace_dir,
+                        task.repo,
+                        task_id,
+                        ts.run_count,
+                    )
+                except RuntimeError:
+                    log.exception("  %s: clone failed, skipping", task_id)
+                    ts.run_count -= 1
+                    continue
                 owner_repo = repo_url_to_owner_repo(task.repo)
             else:
                 local = resolve_local_path(task.repo)
