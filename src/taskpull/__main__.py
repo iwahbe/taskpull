@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import re
+import setproctitle
 import subprocess
 import sys
 import time
@@ -290,6 +291,8 @@ class _HelpFormatter(argparse.HelpFormatter):
 
 
 def main() -> None:
+    setproctitle.setproctitle("taskpull")
+
     parser = argparse.ArgumentParser(
         prog="taskpull",
         description="Pull-based multi-repo Claude Code task runner",
