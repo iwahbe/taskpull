@@ -257,10 +257,16 @@ def _issue_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
     return lines
 
 
+def _task_height(info: dict[str, Any]) -> int:
+    """Return the number of rows a task occupies (including trailing blank line)."""
+    return 1 + len(_pr_detail_lines(info)) + len(_issue_detail_lines(info)) + 1
+
+
 def _draw_sidebar(
     stdscr: curses.window,
     task_list: list[tuple[str, dict[str, Any]]],
     selected: int,
+    scroll_offset: int,
 ) -> None:
     stdscr.clear()
     max_y, max_x = stdscr.getmaxyx()
@@ -273,11 +279,18 @@ def _draw_sidebar(
     stdscr.addnstr(0, 0, " taskpull ", usable_x, curses.A_BOLD | curses.color_pair(1))
     stdscr.addnstr(1, 0, "─" * usable_x, usable_x, curses.color_pair(5))
 
+    # Scroll-up indicator
+    if scroll_offset > 0:
+        stdscr.addnstr(2, 0, " ↑", usable_x, curses.color_pair(5))
+
     # Task list — reserve the last row for the footer.
     footer_row = max_y - 1
     row = 3
-    for i, (tid, info) in enumerate(task_list):
+    truncated = False
+    for i in range(scroll_offset, len(task_list)):
+        tid, info = task_list[i]
         if row >= footer_row - 1:
+            truncated = True
             break
 
         label, color = _status_label(info)
@@ -303,6 +316,7 @@ def _draw_sidebar(
 
         for detail_text, detail_color in _pr_detail_lines(info):
             if row >= footer_row - 1:
+                truncated = True
                 break
             stdscr.addnstr(
                 row, 0, detail_text, usable_x, curses.color_pair(detail_color)
@@ -311,6 +325,7 @@ def _draw_sidebar(
 
         for detail_text, detail_color in _issue_detail_lines(info):
             if row >= footer_row - 1:
+                truncated = True
                 break
             stdscr.addnstr(
                 row, 0, detail_text, usable_x, curses.color_pair(detail_color)
@@ -318,6 +333,11 @@ def _draw_sidebar(
             row += 1
 
         row += 1  # blank line between tasks
+
+    # Scroll-down indicator
+    if truncated:
+        indicator_row = footer_row - 1
+        stdscr.addnstr(indicator_row, 0, " ↓", usable_x, curses.color_pair(5))
 
     # Footer
     footer = " ⌥ j/k:sel  ⌥ h/l:pane"
@@ -361,6 +381,7 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
     curses.halfdelay(20)  # 2 second timeout for getch
 
     selected = 0
+    scroll_offset = 0
     prev_selected = -1
     task_list: list[tuple[str, dict[str, Any]]] = []
 
@@ -383,13 +404,27 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
         if selected >= len(task_list):
             selected = max(0, len(task_list) - 1)
 
+        # Keep selected task visible by adjusting scroll_offset.
+        if selected < scroll_offset:
+            scroll_offset = selected
+        elif task_list:
+            max_y, _ = stdscr.getmaxyx()
+            available = max_y - 5  # rows 3..(footer-2)
+            while scroll_offset < selected:
+                used = 0
+                for j in range(scroll_offset, selected + 1):
+                    used += _task_height(task_list[j][1])
+                if used <= available:
+                    break
+                scroll_offset += 1
+
         # Sync the right pane before drawing: respawn-pane may cause tmux
         # to redraw/resize, which corrupts the curses display.
         if task_list and selected != prev_selected:
             _sync_right_pane(task_list[selected][1])
             prev_selected = selected
 
-        _draw_sidebar(stdscr, task_list, selected)
+        _draw_sidebar(stdscr, task_list, selected, scroll_offset)
 
         try:
             key = stdscr.getch()
