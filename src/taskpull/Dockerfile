@@ -37,13 +37,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# Install taskpull (for hooks and MCP server commands inside the container)
-COPY taskpull*.whl /tmp/
-RUN uv tool install /tmp/taskpull*.whl \
-    && chmod a+x /root \
-    && chmod -R a+rX /root/.local
-
-ENV PATH="/home/worker/.local/bin:/root/.local/bin:$PATH"
+ENV PATH="/home/worker/.local/bin:$PATH"
 
 USER worker
 WORKDIR /workspace

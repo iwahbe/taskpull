@@ -324,31 +324,7 @@ def main() -> None:
     )
     new_parser.add_argument("prompt", help="Task prompt")
 
-    ft_parser = subparsers.add_parser("for-task", help=argparse.SUPPRESS)
-    ft_sub = ft_parser.add_subparsers(dest="for_task_command", required=True)
-
-    notify_parser = ft_sub.add_parser("notify")
-    notify_parser.add_argument("--host", required=True)
-    notify_parser.add_argument("--port", required=True, type=int)
-    notify_parser.add_argument("--task-id", required=True)
-
-    mcp_parser = ft_sub.add_parser("mcp-server")
-    mcp_parser.add_argument("--host", required=True)
-    mcp_parser.add_argument("--port", required=True, type=int)
-    mcp_parser.add_argument("--task-id", required=True)
-
     args = parser.parse_args()
-
-    if args.command == "for-task":
-        if args.for_task_command == "notify":
-            from .notify import main as notify_main
-
-            notify_main(args.host, args.port, args.task_id)
-        elif args.for_task_command == "mcp-server":
-            from .mcp_server import main as mcp_server_main
-
-            mcp_server_main(args.host, args.port, args.task_id)
-        return
 
     config = load_config(args.user_dir)
 

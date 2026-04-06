@@ -11,6 +11,7 @@ class Config:
     poll_interval: int = 300
     ipc_port: int = 19471
     gh_proxy_port: int = 19472
+    http_port: int = 19473
     user_dir: Path = _DEFAULT_DIR
     docker_image: str = "taskpull-worker"
 
@@ -53,4 +54,6 @@ def load_config(user_dir: Path = _DEFAULT_DIR) -> Config:
             kwargs["docker_image"] = str(data["docker_image"])
         if "gh_proxy_port" in data:
             kwargs["gh_proxy_port"] = int(data["gh_proxy_port"])
+        if "http_port" in data:
+            kwargs["http_port"] = int(data["http_port"])
     return Config(**kwargs)

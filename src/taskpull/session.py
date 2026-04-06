@@ -16,9 +16,6 @@ _PROMPT_FILENAME = ".taskpull-prompt.txt"
 _STAGING_MOUNT = "/opt/taskpull"
 
 
-_PROJECT_DIR = Path("/Users/ianwahbe/Projects/taskpull")
-
-
 class SessionBackend(Protocol):
     async def build_image(self, image_name: str) -> None: ...
 
@@ -54,27 +51,11 @@ class SessionBackend(Protocol):
 
 
 async def build_image(image_name: str) -> None:
-    """Build the worker Docker image from the bundled Dockerfile and wheel."""
+    """Build the worker Docker image from the bundled Dockerfile."""
     pkg = importlib.resources.files("taskpull")
     with tempfile.TemporaryDirectory() as ctx_dir:
         ctx = Path(ctx_dir)
         shutil.copy2(str(pkg.joinpath("Dockerfile")), ctx / "Dockerfile")
-
-        wheel_proc = await asyncio.create_subprocess_exec(
-            "uv",
-            "build",
-            "--wheel",
-            "--out-dir",
-            str(ctx),
-            str(_PROJECT_DIR),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        wheel_out, _ = await wheel_proc.communicate()
-        if wheel_proc.returncode != 0:
-            raise RuntimeError(
-                f"uv build failed (rc={wheel_proc.returncode}):\n{wheel_out.decode()}"
-            )
 
         build_env = {**os.environ, "BUILDX_BUILDER": ""}
         proc = await asyncio.create_subprocess_exec(

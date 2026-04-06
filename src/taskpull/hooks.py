@@ -10,27 +10,19 @@ log = logging.getLogger(__name__)
 def write_hooks_config(
     workspace: Path,
     task_id: str,
-    ipc_port: int,
+    http_port: int,
 ) -> Path:
+    base_url = f"http://host.docker.internal:{http_port}"
     notify_cmd = (
-        f"taskpull for-task notify --host host.docker.internal --port {ipc_port}"
-        f" --task-id {task_id}"
+        f"curl -s --max-time 10 -X POST"
+        f" -H 'Content-Type: application/json'"
+        f" -d @- {base_url}/hooks/{task_id}/notify"
     )
 
     mcp_config = {
         "mcpServers": {
             "taskpull": {
-                "command": "taskpull",
-                "args": [
-                    "for-task",
-                    "mcp-server",
-                    "--host",
-                    "host.docker.internal",
-                    "--port",
-                    str(ipc_port),
-                    "--task-id",
-                    task_id,
-                ],
+                "url": f"{base_url}/mcp/{task_id}",
             },
         },
     }

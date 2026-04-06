@@ -13,6 +13,7 @@ from typing import Any
 from .config import Config
 from .gh_proxy import GHProxy, generate_certs, parse_github_repo
 from .hooks import write_hooks_config
+from .http_server import run_http_server
 from .ipc import run_ipc_server
 from .session import SessionBackend
 from .state import TaskState, TaskStatus, load_state, save_state
@@ -378,6 +379,9 @@ async def run(
     ipc_task = asyncio.create_task(
         run_ipc_server(config.ipc_port, ipc_handler, shutdown_event),
     )
+    http_task = asyncio.create_task(
+        run_http_server(config.http_port, ipc_handler, shutdown_event),
+    )
     proxy_task = asyncio.create_task(
         gh_proxy.run(config.gh_proxy_port, shutdown_event),
     )
@@ -433,6 +437,7 @@ async def run(
 
         shutdown_event.set()
         await ipc_task
+        await http_task
         await proxy_task
         log.info("taskpull stopped")
 
@@ -649,7 +654,7 @@ async def _phase4_launch(
             mcp_config = write_hooks_config(
                 ws,
                 task_id,
-                config.ipc_port,
+                config.http_port,
             )
 
             proxy_secret = gh_proxy.register_task(owner_repo, task_id)
