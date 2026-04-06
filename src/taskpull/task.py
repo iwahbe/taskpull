@@ -87,6 +87,7 @@ def discover_tasks(tasks_dir: Path, state: dict[str, TaskState]) -> dict[str, Ta
                 repo=ts.repo,
                 repeat=False,
                 prompt=ts.adhoc,
+                repo_lock=ts.repo_lock,
             )
     return tasks
 

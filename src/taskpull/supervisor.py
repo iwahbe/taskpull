@@ -389,7 +389,10 @@ async def run(
             if tid in current_state:
                 return {"status": "error", "message": f"task already exists: {tid}"}
             goal = TaskGoal(request.get("goal", "none"))
-            current_state[tid] = TaskState(adhoc=prompt, repo=repo, goal=goal)
+            repo_lock = request.get("repo_lock")
+            current_state[tid] = TaskState(
+                adhoc=prompt, repo=repo, goal=goal, repo_lock=repo_lock
+            )
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("new_task registered: %s (repo=%s)", tid, repo)

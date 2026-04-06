@@ -236,7 +236,7 @@ def _slug_from_repo(repo: str) -> str:
     return Path(repo).resolve().name
 
 
-def cmd_new(config, location: str, prompt: str, goal: str):
+def cmd_new(config, location: str, prompt: str, goal: str, repo_lock: str | None):
     from .workspace import is_repo_url, normalize_location, resolve_local_path
 
     if location == "git":
@@ -270,6 +270,7 @@ def cmd_new(config, location: str, prompt: str, goal: str):
             repo=repo,
             prompt=prompt,
             goal=goal,
+            repo_lock=repo_lock,
         )
     except ConnectionRefusedError:
         print("could not connect to daemon")
@@ -326,6 +327,11 @@ def main() -> None:
         help="Task goal: 'pr' to terminate on PR close/merge, 'none' for open-ended (default: none)",
     )
     new_parser.add_argument(
+        "--repo-lock",
+        default=None,
+        help="Concurrency key. Tasks with the same repo and repo-lock won't run simultaneously.",
+    )
+    new_parser.add_argument(
         "location",
         help="Git repo URL, local path, or 'git' for current repo's origin",
     )
@@ -340,7 +346,7 @@ def main() -> None:
         return
 
     if args.command == "new":
-        cmd_new(config, args.location, args.prompt, args.goal)
+        cmd_new(config, args.location, args.prompt, args.goal, args.repo_lock)
         return
 
     if args.command is None:

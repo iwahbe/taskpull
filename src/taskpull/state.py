@@ -44,6 +44,7 @@ class TaskState:
     # value is the task prompt.  None means the task is file-based (prompt
     # comes from the .md file).
     adhoc: str | None = None
+    repo_lock: str | None = None
     goal: TaskGoal = TaskGoal.PR
     issues: list[dict[str, Any]] = field(default_factory=list)
 
