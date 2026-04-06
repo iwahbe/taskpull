@@ -9,10 +9,16 @@ RUN apt-get update && apt-get install -y \
     ripgrep \
     libicu72 \
     libssl3 \
+    locales \
     socat \
     tmux \
     unzip \
+    && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen \
+    && locale-gen \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 # Install mise (into /usr/local/bin so it's available to all users)
 RUN curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh

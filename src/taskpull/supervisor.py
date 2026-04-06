@@ -16,7 +16,7 @@ from .hooks import write_hooks_config
 from .http_server import run_http_server
 from .ipc import run_ipc_server
 from .session import SessionBackend
-from .state import TaskState, TaskStatus, load_state, save_state
+from .state import TaskGoal, TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_md_tasks
 from .workspace import (
     cleanup_workspace,
@@ -108,8 +108,10 @@ def _owner_repo_for_task(task: TaskFile) -> str:
     raise ValueError(f"cannot determine owner/repo for local path: {task.repo}")
 
 
-def _build_prompt(task: TaskFile) -> str:
-    prompt = task.prompt + PR_INSTRUCTIONS
+def _build_prompt(task: TaskFile, goal: TaskGoal) -> str:
+    prompt = task.prompt
+    if goal == TaskGoal.PR:
+        prompt += PR_INSTRUCTIONS
     if task.repeat:
         prompt += REPEAT_SUFFIX
     return prompt
@@ -229,10 +231,27 @@ async def run(
             shutdown_event.set()
             return {"status": "ok"}
         if command == "list":
-            return {
-                "status": "ok",
-                "tasks": {k: v.to_dict() for k, v in current_state.items()},
-            }
+            all_tasks = discover_tasks(config.tasks_dir, current_state)
+            # Build lane → active task mapping for blocked_on info.
+            lane_active: dict[tuple[str, str], str] = {}
+            for tid, ts in current_state.items():
+                if ts.status == TaskStatus.ACTIVE:
+                    tf = all_tasks.get(tid)
+                    if tf:
+                        lane_active[tf.lane_key] = tid
+
+            enriched: dict[str, dict[str, Any]] = {}
+            for tid, ts in current_state.items():
+                d = ts.to_dict()
+                tf = all_tasks.get(tid)
+                if tf and tf.repo_lock:
+                    d["repo_lock"] = tf.repo_lock
+                if ts.status == TaskStatus.IDLE and tf:
+                    blocker = lane_active.get(tf.lane_key)
+                    if blocker:
+                        d["blocked_on"] = blocker
+                enriched[tid] = d
+            return {"status": "ok", "tasks": enriched}
         if command == "status":
             result = validate_md_tasks(config.tasks_dir)
             return {
@@ -275,6 +294,8 @@ async def run(
             await _cleanup_task(ts, gh_proxy, backend)
             _reset_task(ts)
             ts.setup_failure_count = 0
+            ts.exhaust_count = 0
+            ts.last_launched_at = 0
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("restart received for %s", tid)
@@ -331,6 +352,29 @@ async def run(
                 ts.setup_failure_count = 0
             elif event_type == "activity":
                 ts.activity = event["activity"]
+            elif event_type == "setup_failed":
+                error_output = ""
+                if ts.session_name:
+                    error_output = await backend.session_pane_output(ts.session_name)
+                ts.setup_failure_count += 1
+                await _cleanup_task(ts, gh_proxy, backend)
+                if ts.setup_failure_count >= 3:
+                    log.info(
+                        "  %s: initialization failed 3 times, marking broken",
+                        tid,
+                    )
+                    _reset_task(ts)
+                    ts.status = TaskStatus.BROKEN
+                    ts.error_message = error_output
+                else:
+                    log.info(
+                        "  %s: initialization failed (attempt %d/3), will retry",
+                        tid,
+                        ts.setup_failure_count,
+                    )
+                    _reset_task(ts)
+                    ts.error_message = error_output
+                refresh_event.set()
             save_state(config.state_file, current_state)
             return {"status": "ok"}
         if command == "new_task":
@@ -344,7 +388,8 @@ async def run(
                 }
             if tid in current_state:
                 return {"status": "error", "message": f"task already exists: {tid}"}
-            current_state[tid] = TaskState(adhoc=prompt, repo=repo)
+            goal = TaskGoal(request.get("goal", "none"))
+            current_state[tid] = TaskState(adhoc=prompt, repo=repo, goal=goal)
             save_state(config.state_file, current_state)
             refresh_event.set()
             log.info("new_task registered: %s (repo=%s)", tid, repo)
@@ -403,6 +448,7 @@ async def run(
 
     try:
         while not shutdown_event.is_set():
+            refresh_event.clear()
             log.info("--- Poll cycle ---")
 
             tasks = discover_tasks(config.tasks_dir, current_state)
@@ -415,7 +461,6 @@ async def run(
 
             save_state(config.state_file, current_state)
 
-            refresh_event.clear()
             try:
                 await asyncio.wait_for(
                     refresh_event.wait(), timeout=config.poll_interval
@@ -487,20 +532,21 @@ async def _phase2_check_prs(
         ts.pr_draft = pr_info.is_draft
         ts.pr_approved = pr_info.approved
 
-        if pr_info.state == "MERGED":
-            log.info("  %s: PR #%d merged", task_id, ts.pr_number)
-            await _cleanup_task(ts, gh_proxy, backend)
+        if ts.goal == TaskGoal.PR:
+            if pr_info.state == "MERGED":
+                log.info("  %s: PR #%d merged", task_id, ts.pr_number)
+                await _cleanup_task(ts, gh_proxy, backend)
 
-            if task.repeat:
-                ts.exhaust_count = 0
+                if task.repeat:
+                    ts.exhaust_count = 0
+                    _reset_task(ts)
+                else:
+                    ts.status = TaskStatus.DONE
+
+            elif pr_info.state == "CLOSED":
+                log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
+                await _cleanup_task(ts, gh_proxy, backend)
                 _reset_task(ts)
-            else:
-                ts.status = TaskStatus.DONE
-
-        elif pr_info.state == "CLOSED":
-            log.info("  %s: PR #%d closed without merge", task_id, ts.pr_number)
-            await _cleanup_task(ts, gh_proxy, backend)
-            _reset_task(ts)
 
 
 async def _phase3_check_sessions(
@@ -659,7 +705,7 @@ async def _phase4_launch(
 
             proxy_secret = gh_proxy.register_task(owner_repo, task_id)
 
-            prompt = _build_prompt(task)
+            prompt = _build_prompt(task, ts.goal)
             session_name = f"taskpull-{task_id}"
             env: dict[str, str] = {
                 "CLAUDE_CODE_OAUTH_TOKEN": claude_token,
@@ -680,6 +726,7 @@ async def _phase4_launch(
                 env,
                 gh_proxy.ca_cert_path,
                 config.gh_proxy_port,
+                config.http_port,
             )
 
             ts.status = TaskStatus.ACTIVE

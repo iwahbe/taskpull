@@ -236,7 +236,7 @@ def _slug_from_repo(repo: str) -> str:
     return Path(repo).resolve().name
 
 
-def cmd_new(config, location: str, prompt: str):
+def cmd_new(config, location: str, prompt: str, goal: str):
     from .workspace import is_repo_url, normalize_location, resolve_local_path
 
     if location == "git":
@@ -269,6 +269,7 @@ def cmd_new(config, location: str, prompt: str):
             task_id=task_id,
             repo=repo,
             prompt=prompt,
+            goal=goal,
         )
     except ConnectionRefusedError:
         print("could not connect to daemon")
@@ -319,6 +320,12 @@ def main() -> None:
 
     new_parser = subparsers.add_parser("new", help="Create a one-time ad-hoc task")
     new_parser.add_argument(
+        "--goal",
+        choices=["none", "pr"],
+        default="none",
+        help="Task goal: 'pr' to terminate on PR close/merge, 'none' for open-ended (default: none)",
+    )
+    new_parser.add_argument(
         "location",
         help="Git repo URL, local path, or 'git' for current repo's origin",
     )
@@ -333,7 +340,7 @@ def main() -> None:
         return
 
     if args.command == "new":
-        cmd_new(config, args.location, args.prompt)
+        cmd_new(config, args.location, args.prompt, args.goal)
         return
 
     if args.command is None:

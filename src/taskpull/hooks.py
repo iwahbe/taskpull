@@ -22,6 +22,7 @@ def write_hooks_config(
     mcp_config = {
         "mcpServers": {
             "taskpull": {
+                "type": "http",
                 "url": f"{base_url}/mcp/{task_id}",
             },
         },

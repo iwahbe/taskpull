@@ -31,6 +31,7 @@ class SessionBackend(Protocol):
         env: dict[str, str],
         ca_cert: Path | None,
         gh_proxy_port: int,
+        http_port: int = 0,
     ) -> str: ...
 
     async def session_alive(self, name: str) -> bool: ...
@@ -110,6 +111,7 @@ async def launch_session(
     env: dict[str, str],
     ca_cert: Path | None,
     gh_proxy_port: int,
+    http_port: int = 0,
 ) -> str:
     # Staging directory for taskpull utility files, kept out of the workspace
     # so they don't pollute the git checkout.
@@ -164,13 +166,30 @@ async def launch_session(
 
     # Write the Claude launch script and tmux config as files inside the
     # container to avoid nested shell-quoting issues.
+    notify_url = (
+        f"http://host.docker.internal:{http_port}/hooks/{task_id}/notify"
+        if http_port
+        else ""
+    )
+    notify_fn = ""
+    notify_trap = ""
+    if notify_url:
+        notify_fn = (
+            "_notify_setup_failed() {\n"
+            """  echo '{"hook_event_name":"SetupFailed"}' | \\\n"""
+            "    curl -s --max-time 10 -X POST \\\n"
+            "    -H 'Content-Type: application/json' \\\n"
+            f"    -d @- {notify_url}\n"
+            "}\n"
+        )
+        notify_trap = " || { _notify_setup_failed; exit 1; }"
+
     claude_script = (
         "#!/bin/bash\n"
         "set -e\n"
         "cd /workspace\n"
-        "if ! mise install --yes --dry-run-code; then\n"
-        "  mise install --yes\n"
-        "fi\n"
+        f"{notify_fn}"
+        f"mise install --yes --dry-run-code || mise install --yes{notify_trap}\n"
         'eval "$(mise activate bash)"\n'
         "exec claude "
         "--dangerously-skip-permissions "
@@ -226,6 +245,7 @@ async def launch_session(
             f" {_STAGING_MOUNT}/.taskpull-ca.pem"
             " > /tmp/ca-bundle.pem && "
             "export SSL_CERT_FILE=/tmp/ca-bundle.pem && "
+            "export NODE_EXTRA_CA_CERTS=/tmp/ca-bundle.pem && "
             "git config --global http.sslCAInfo /tmp/ca-bundle.pem && "
             "git config --global credential.helper "
             """'!/bin/sh -c "echo username=x-access-token; echo password=\\$GITHUB_TOKEN"' && """
@@ -439,6 +459,7 @@ class DockerBackend:
         env: dict[str, str],
         ca_cert: Path | None = None,
         gh_proxy_port: int = 0,
+        http_port: int = 0,
     ) -> str:
         return await launch_session(
             name,
@@ -451,6 +472,7 @@ class DockerBackend:
             env,
             ca_cert,
             gh_proxy_port,
+            http_port,
         )
 
     async def session_alive(self, name: str) -> bool:

@@ -17,6 +17,11 @@ class TaskStatus(enum.Enum):
     BROKEN = "broken"
 
 
+class TaskGoal(enum.Enum):
+    PR = "pr"
+    NONE = "none"
+
+
 @dataclass
 class TaskState:
     status: TaskStatus = TaskStatus.IDLE
@@ -39,11 +44,13 @@ class TaskState:
     # value is the task prompt.  None means the task is file-based (prompt
     # comes from the .md file).
     adhoc: str | None = None
+    goal: TaskGoal = TaskGoal.PR
     issues: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["status"] = self.status.value
+        d["goal"] = self.goal.value
         return d
 
     def exhaust_backoff(self, poll_interval: int) -> float:
@@ -53,9 +60,9 @@ class TaskState:
         return multiplier * poll_interval
 
     def setup_retry_backoff(self, poll_interval: int) -> float:
-        if self.setup_failure_count <= 0:
+        if self.setup_failure_count <= 1:
             return 0
-        multiplier = min(2**self.setup_failure_count, 24)
+        multiplier = min(2 ** (self.setup_failure_count - 1), 24)
         return multiplier * poll_interval
 
     def seconds_since_launch(self) -> float:
@@ -70,6 +77,7 @@ class TaskState:
         if raw_status == "pr_open":
             raw_status = "active"
         d["status"] = TaskStatus(raw_status)
+        d["goal"] = TaskGoal(d.get("goal", "pr"))
         # Migrate legacy exhausted bool → exhaust_count.
         if d.pop("exhausted", False) and "exhaust_count" not in d:
             d["exhaust_count"] = 1

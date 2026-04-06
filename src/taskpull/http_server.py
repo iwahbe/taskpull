@@ -74,6 +74,8 @@ async def _hook_notify(request: Request) -> Response:
             "session_id": session_id,
             "timestamp": timestamp,
         }
+    elif event_name == "SetupFailed":
+        event = {"type": "setup_failed", "timestamp": timestamp}
 
     if event is None:
         return JSONResponse({"status": "ok", "message": "ignored"})

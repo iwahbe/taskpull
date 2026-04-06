@@ -100,11 +100,11 @@ class TestSetupRetryBackoff:
 
     def test_failure_count_one(self):
         ts = TaskState(setup_failure_count=1)
-        assert ts.setup_retry_backoff(300) == 2 * 300
+        assert ts.setup_retry_backoff(300) == 0
 
     def test_failure_count_two(self):
         ts = TaskState(setup_failure_count=2)
-        assert ts.setup_retry_backoff(300) == 4 * 300
+        assert ts.setup_retry_backoff(300) == 2 * 300
 
     def test_capped_at_24x(self):
         ts = TaskState(setup_failure_count=100)

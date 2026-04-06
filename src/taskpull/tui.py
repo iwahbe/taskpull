@@ -257,9 +257,27 @@ def _issue_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
     return lines
 
 
+def _meta_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
+    """Return extra lines for repo_lock and blocked_on metadata."""
+    lines: list[tuple[str, int]] = []
+    repo_lock = info.get("repo_lock")
+    if repo_lock:
+        lines.append((f"     [repo_key={repo_lock}]", 5))
+    blocked_on = info.get("blocked_on")
+    if blocked_on:
+        lines.append((f"     [blocked_on={blocked_on}]", 4))
+    return lines
+
+
 def _task_height(info: dict[str, Any]) -> int:
     """Return the number of rows a task occupies (including trailing blank line)."""
-    return 1 + len(_pr_detail_lines(info)) + len(_issue_detail_lines(info)) + 1
+    return (
+        1
+        + len(_pr_detail_lines(info))
+        + len(_issue_detail_lines(info))
+        + len(_meta_detail_lines(info))
+        + 1
+    )
 
 
 def _draw_sidebar(
@@ -302,7 +320,9 @@ def _draw_sidebar(
         line = f" {marker} {tid}"
         stdscr.addnstr(row, 0, line, usable_x, attr | curses.color_pair(1))
 
+        goal = info.get("goal", "pr")
         status_str = f" {label} (run {runs})"
+        goal_str = f" [goal={goal}]"
         status_col = len(line)
         if status_col + len(status_str) < usable_x:
             stdscr.addnstr(
@@ -312,6 +332,15 @@ def _draw_sidebar(
                 usable_x - status_col,
                 curses.color_pair(color),
             )
+            goal_col = status_col + len(status_str)
+            if goal_col + len(goal_str) < usable_x:
+                stdscr.addnstr(
+                    row,
+                    goal_col,
+                    goal_str,
+                    usable_x - goal_col,
+                    curses.color_pair(5),
+                )
         row += 1
 
         for detail_text, detail_color in _pr_detail_lines(info):
@@ -324,6 +353,15 @@ def _draw_sidebar(
             row += 1
 
         for detail_text, detail_color in _issue_detail_lines(info):
+            if row >= footer_row - 1:
+                truncated = True
+                break
+            stdscr.addnstr(
+                row, 0, detail_text, usable_x, curses.color_pair(detail_color)
+            )
+            row += 1
+
+        for detail_text, detail_color in _meta_detail_lines(info):
             if row >= footer_row - 1:
                 truncated = True
                 break

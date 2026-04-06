@@ -11,6 +11,7 @@ import pytest
 from taskpull.config import Config
 from taskpull.gh_proxy import GHProxy
 from taskpull.state import TaskState, TaskStatus
+from taskpull.state import TaskGoal
 from taskpull.supervisor import (
     PrInfo,
     _build_prompt,
@@ -53,6 +54,7 @@ class FakeBackend:
         env: dict[str, str],
         ca_cert: Path | None,
         gh_proxy_port: int,
+        http_port: int = 0,
     ) -> str:
         self.launched.append(
             {
@@ -107,7 +109,7 @@ class TestBuildPrompt:
         task = TaskFile(
             repo="https://github.com/o/r", repeat=False, prompt="Fix the bug."
         )
-        prompt = _build_prompt(task)
+        prompt = _build_prompt(task, TaskGoal.PR)
         assert "Fix the bug." in prompt
         assert "gh pr create" in prompt
         assert "task_exhausted" not in prompt
@@ -116,7 +118,7 @@ class TestBuildPrompt:
         task = TaskFile(
             repo="https://github.com/o/r", repeat=True, prompt="Check logs."
         )
-        prompt = _build_prompt(task)
+        prompt = _build_prompt(task, TaskGoal.PR)
         assert "Check logs." in prompt
         assert "task_exhausted" in prompt
 
@@ -521,7 +523,7 @@ class TestPhase4Launch:
 
         state: dict[str, TaskState] = {
             "task-a": TaskState(
-                setup_failure_count=1,
+                setup_failure_count=2,
                 last_launched_at=int(time.time()),
             ),
         }
