@@ -659,7 +659,6 @@ class GHProxy:
         owner = obj.get("owner")
         if (
             isinstance(node_id, str)
-            and node_id.startswith("R_")
             and isinstance(name, str)
             and isinstance(owner, dict)
             and isinstance(owner.get("login"), str)

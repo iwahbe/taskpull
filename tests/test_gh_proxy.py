@@ -585,3 +585,35 @@ async def test_graphql_pr_created_callback_skips_non_mutation():
         )
 
         assert results == []
+
+
+def test_cache_repo_node_ids_legacy_format():
+    """Legacy v1 node IDs (MDEw...) are cached, not just v2 (R_...) IDs."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        legacy_node_id = base64.b64encode(b"010:Repository104365663").decode()
+        response_body = json.dumps(
+            {
+                "data": {
+                    "repository": {
+                        "id": legacy_node_id,
+                        "name": "repo",
+                        "owner": {"login": "owner"},
+                    }
+                }
+            }
+        ).encode()
+
+        proxy._cache_repo_node_ids(secret, response_body)
+
+        assert proxy._repo_node_cache[secret][legacy_node_id] == "owner/repo"
