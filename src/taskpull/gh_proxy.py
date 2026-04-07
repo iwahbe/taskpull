@@ -151,6 +151,7 @@ class GHProxy:
     #   - The cache is per-proxy-token, so one task cannot influence another.
     _ALLOWED_MUTATIONS: dict[str, tuple[str, ...]] = {
         "createPullRequest": ("input", "repositoryId"),
+        "createIssue": ("input", "repositoryId"),
     }
 
     def __init__(
@@ -324,6 +325,14 @@ class GHProxy:
                 method, forwarded_path, status_code, response_body, proxy_token or ""
             )
             await self._maybe_notify_graphql_pr_created(
+                method,
+                forwarded_path,
+                status_code,
+                body,
+                response_body,
+                proxy_token or "",
+            )
+            await self._maybe_notify_graphql_issue_created(
                 method,
                 forwarded_path,
                 status_code,
@@ -644,6 +653,49 @@ class GHProxy:
 
         log.info("GH proxy: detected GraphQL PR #%d for task %s", pr_number, task_id)
         await self._on_pr_created(task_id, pr_number, pr_url)
+
+    async def _maybe_notify_graphql_issue_created(
+        self,
+        method: str,
+        path: str,
+        status_code: int,
+        request_body: bytes,
+        response_body: bytes,
+        proxy_token: str,
+    ) -> None:
+        if self._on_issue_created is None:
+            return
+        if method != "POST" or status_code != 200:
+            return
+        if path != "/graphql":
+            return
+
+        try:
+            req_data = json.loads(request_body)
+            query = req_data.get("query", "")
+            mutation_fields = self._extract_graphql_mutation_fields(query)
+            if mutation_fields is None or "createIssue" not in mutation_fields:
+                return
+        except (json.JSONDecodeError, GraphQLSyntaxError, UnicodeDecodeError):
+            return
+
+        task_id = self._task_map.get(proxy_token)
+        if not task_id:
+            return
+
+        try:
+            resp_data = json.loads(response_body)
+            issue_data = resp_data["data"]["createIssue"]["issue"]
+            issue_number = issue_data["number"]
+            issue_url = issue_data["url"]
+        except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError):
+            log.warning("GH proxy: failed to parse GraphQL issue creation response")
+            return
+
+        log.info(
+            "GH proxy: detected GraphQL issue #%d for task %s", issue_number, task_id
+        )
+        await self._on_issue_created(task_id, issue_number, issue_url)
 
     def _cache_repo_node_ids(self, proxy_token: str, response_body: bytes) -> None:
         try:

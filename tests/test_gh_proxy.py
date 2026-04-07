@@ -587,6 +587,108 @@ async def test_graphql_pr_created_callback_skips_non_mutation():
         assert results == []
 
 
+@pytest.mark.asyncio
+async def test_graphql_issue_created_callback_fires():
+    """_maybe_notify_graphql_issue_created fires when a createIssue mutation succeeds."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_issue_created(
+            task_id: str, issue_number: int, issue_url: str
+        ) -> None:
+            results.append((task_id, issue_number, issue_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_issue_created=on_issue_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        request_body = json.dumps(
+            {
+                "query": "mutation CreateIssue($input: CreateIssueInput!) { createIssue(input: $input) { issue { id number url } } }",
+                "variables": {"input": {"repositoryId": "R_abc"}},
+            }
+        ).encode()
+        response_body = json.dumps(
+            {
+                "data": {
+                    "createIssue": {
+                        "issue": {
+                            "id": "I_abc",
+                            "number": 7,
+                            "url": "https://github.com/owner/repo/issues/7",
+                        }
+                    }
+                }
+            }
+        ).encode()
+
+        await proxy._maybe_notify_graphql_issue_created(
+            "POST", "/graphql", 200, request_body, response_body, secret
+        )
+
+        assert results == [
+            ("my-task", 7, "https://github.com/owner/repo/issues/7"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_graphql_issue_created_callback_skips_non_mutation():
+    """_maybe_notify_graphql_issue_created ignores non-mutation requests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cert_dir = Path(tmpdir) / "certs"
+        ca_cert, _, server_cert, server_key = _generate_localhost_certs(cert_dir)
+
+        results: list[tuple[str, int, str]] = []
+
+        async def on_issue_created(
+            task_id: str, issue_number: int, issue_url: str
+        ) -> None:
+            results.append((task_id, issue_number, issue_url))
+
+        proxy = GHProxy(
+            "fake-gh-token",
+            ca_cert,
+            server_cert,
+            server_key,
+            on_issue_created=on_issue_created,
+        )
+        secret = proxy.register_task("owner/repo", "my-task")
+
+        query_body = json.dumps(
+            {
+                "query": "{ viewer { login } }",
+            }
+        ).encode()
+        response_body = json.dumps({"data": {"viewer": {"login": "me"}}}).encode()
+
+        await proxy._maybe_notify_graphql_issue_created(
+            "POST", "/graphql", 200, query_body, response_body, secret
+        )
+        # Wrong status code
+        mutation_body = json.dumps(
+            {
+                "query": "mutation { createIssue(input: $input) { issue { id number url } } }",
+            }
+        ).encode()
+        await proxy._maybe_notify_graphql_issue_created(
+            "POST", "/graphql", 403, mutation_body, b"{}", secret
+        )
+        # Wrong path
+        await proxy._maybe_notify_graphql_issue_created(
+            "POST", "/repos/o/r/issues", 200, mutation_body, b"{}", secret
+        )
+
+        assert results == []
+
+
 def test_cache_repo_node_ids_legacy_format():
     """Legacy v1 node IDs (MDEw...) are cached, not just v2 (R_...) IDs."""
     with tempfile.TemporaryDirectory() as tmpdir:
