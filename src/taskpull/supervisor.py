@@ -318,31 +318,34 @@ async def run(
             }
         if command == "task_exhausted":
             tid: str = request.get("task_id", "")
-            log.info(
-                "task_exhausted handler entered for %s (status=%s, session=%s)",
-                tid,
-                current_state.get(tid, TaskState()).status.value,
-                current_state.get(tid, TaskState()).session_name,
-            )
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
-            await _cleanup_task(ts, gh_proxy, backend)
-            log.info(
-                "task_exhausted cleanup done for %s (status=%s, session=%s)",
-                tid,
-                ts.status.value,
-                ts.session_name,
-            )
+            # Update state and persist BEFORE killing the container.
+            # _cleanup_task kills the container, which is the MCP client
+            # making this request. The broken connection causes the ASGI
+            # framework to cancel this coroutine, so any state changes
+            # after _cleanup_task would be lost.
+            proxy_secret = ts.proxy_secret
+            workspace = Path(ts.workspace) if ts.workspace else None
+            repo = ts.repo
+            session_name = ts.session_name
             if ts.adhoc is not None:
                 _reset_task(ts)
                 ts.status = TaskStatus.DONE
             else:
                 ts.exhaust_count += 1
                 _reset_task(ts)
+                ts.last_launched_at = int(time.time())
             save_state(config.state_file, current_state)
+            if proxy_secret:
+                gh_proxy.unregister_task(proxy_secret)
+            if workspace and is_repo_url(repo or ""):
+                await cleanup_workspace(workspace)
+            if session_name:
+                await backend.kill_session(session_name)
             refresh_event.set()
-            log.info("task_exhausted completed for %s (exhaust_count=%d)", tid, ts.exhaust_count)
+            log.info("task_exhausted received for %s", tid)
             return {"status": "ok"}
         if command == "restart":
             tid = request.get("task_id", "")
