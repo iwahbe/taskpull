@@ -28,7 +28,6 @@ than using a cached wheel.
 After reinstalling, restart the daemon and relaunch the TUI:
 
 ```
-taskpull stop
-taskpull start
+taskpull daemon restart
 taskpull tui
 ```

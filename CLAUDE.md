@@ -17,7 +17,7 @@ After making changes, reinstall and restart so the user can test:
 
 ```
 uv tool install --reinstall .
-taskpull stop && taskpull start
+taskpull daemon restart
 ```
 
 ## Verifying UI changes

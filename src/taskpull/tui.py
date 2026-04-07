@@ -55,7 +55,7 @@ def _right_pane_cmd(tasks: dict[str, dict[str, Any]]) -> str:
 def launch_tui(config: Config) -> None:
     running, _ = is_daemon_running(config)
     if not running:
-        print("daemon is not running (start with `taskpull start`)")
+        print("daemon is not running (start with `taskpull daemon start`)")
         sys.exit(1)
 
     if not shutil.which("tmux"):

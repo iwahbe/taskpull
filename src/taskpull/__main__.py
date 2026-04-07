@@ -71,7 +71,7 @@ def _task_status_label(info: dict[str, Any]) -> str:
 def cmd_status(config):
     running, pid = is_daemon_running(config)
     if not running:
-        print("daemon is not running (start with `taskpull start`)")
+        print("daemon is not running (start with `taskpull daemon start`)")
         sys.exit(1)
     print(f"daemon is running (PID {pid})")
 
@@ -145,7 +145,7 @@ def cmd_status(config):
 def _require_daemon(config):
     running, _ = is_daemon_running(config)
     if not running:
-        print("daemon is not running (start with `taskpull start`)")
+        print("daemon is not running (start with `taskpull daemon start`)")
         sys.exit(1)
 
 
@@ -154,7 +154,7 @@ def cmd_list(config):
     try:
         response = send_command("127.0.0.1", config.ipc_port, "list")
     except ConnectionRefusedError:
-        print("daemon is not running (start with `taskpull start`)")
+        print("daemon is not running (start with `taskpull daemon start`)")
         sys.exit(1)
 
     tasks = response.get("tasks", {})
@@ -208,7 +208,7 @@ def cmd_refresh(config):
     try:
         send_command("127.0.0.1", config.ipc_port, "refresh")
     except ConnectionRefusedError:
-        print("daemon is not running (start with `taskpull start`)")
+        print("daemon is not running (start with `taskpull daemon start`)")
         sys.exit(1)
     print("refresh triggered")
 
@@ -310,17 +310,26 @@ def main() -> None:
     subparsers = parser.add_subparsers(
         dest="command",
         required=False,
-        metavar="{start,stop,status,list,refresh,restart,new}",
+        metavar="{daemon,status,list,refresh,restart,new}",
     )
-    subparsers.add_parser("start", help="Start the daemon")
-    subparsers.add_parser("stop", help="Stop the daemon")
+
+    daemon_parser = subparsers.add_parser("daemon", help="Manage the background daemon")
+    daemon_sub = daemon_parser.add_subparsers(
+        dest="daemon_command",
+        required=True,
+        metavar="{start,stop,restart}",
+    )
+    daemon_sub.add_parser("start", help="Start the daemon")
+    daemon_sub.add_parser("stop", help="Stop the daemon")
+    daemon_sub.add_parser("restart", help="Stop and restart the daemon")
+
     subparsers.add_parser("status", help="Show daemon status and validate tasks")
     subparsers.add_parser("list", help="Show tasks and their states")
     subparsers.add_parser("refresh", help="Trigger an immediate poll cycle")
-    restart_parser = subparsers.add_parser(
+    task_restart_parser = subparsers.add_parser(
         "restart", help="Kill a task's session and re-enqueue it"
     )
-    restart_parser.add_argument("task_name", help="Name of the task to restart")
+    task_restart_parser.add_argument("task_name", help="Name of the task to restart")
 
     new_parser = subparsers.add_parser("new", help="Create a one-time ad-hoc task")
     new_parser.add_argument(
@@ -344,6 +353,18 @@ def main() -> None:
 
     config = load_config(args.user_dir)
 
+    if args.command == "daemon":
+        if args.daemon_command == "start":
+            cmd_start(config)
+        elif args.daemon_command == "stop":
+            cmd_stop(config)
+        elif args.daemon_command == "restart":
+            running, _ = is_daemon_running(config)
+            if running:
+                cmd_stop(config)
+            cmd_start(config)
+        return
+
     if args.command == "restart":
         cmd_restart(config, args.task_name)
         return
@@ -360,8 +381,6 @@ def main() -> None:
         return
 
     commands = {
-        "start": cmd_start,
-        "stop": cmd_stop,
         "status": cmd_status,
         "list": cmd_list,
         "refresh": cmd_refresh,

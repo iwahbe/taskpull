@@ -90,7 +90,7 @@ def stop_daemon(config: Config) -> None:
             remove_pid(config)
             print(f"removed stale PID file (PID {pid})")
         else:
-            print("daemon is not running (start with `taskpull start`)")
+            print("daemon is not running (start with `taskpull daemon start`)")
         sys.exit(1)
 
     assert pid is not None

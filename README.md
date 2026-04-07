@@ -32,7 +32,7 @@ uv tool install git+https://github.com/iwahbe/taskpull.git
 └── worktrees/      # git worktrees for active tasks
 ```
 
-2. Run `taskpull start`.
+2. Run `taskpull daemon start`.
 
 ## Task file format
 
@@ -91,10 +91,13 @@ All sessions register with Remote Control. Open the Claude app (iOS, Android, or
 
 ```bash
 # Start the daemon
-taskpull start
+taskpull daemon start
 
 # Stop the daemon
-taskpull stop
+taskpull daemon stop
+
+# Restart the daemon
+taskpull daemon restart
 
 # Check whether the daemon is running
 taskpull status
