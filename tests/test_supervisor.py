@@ -10,7 +10,7 @@ import pytest
 
 from taskpull.config import Config
 from taskpull.gh_proxy import GHProxy
-from taskpull.state import TaskState, TaskStatus
+from taskpull.state import CiStatus, TaskState, TaskStatus
 from taskpull.state import TaskGoal
 from taskpull.supervisor import (
     PrInfo,
@@ -318,7 +318,9 @@ class TestPhase2CheckPrs:
 
         with patch(
             "taskpull.supervisor._check_pr_state",
-            return_value=PrInfo(state="MERGED", is_draft=False, approved=True),
+            return_value=PrInfo(
+                state="MERGED", is_draft=False, approved=True, ci=CiStatus.PASS
+            ),
         ):
             await _phase2_check_prs(state, tasks, gh_proxy, backend)
 
@@ -348,7 +350,9 @@ class TestPhase2CheckPrs:
 
         with patch(
             "taskpull.supervisor._check_pr_state",
-            return_value=PrInfo(state="MERGED", is_draft=False, approved=None),
+            return_value=PrInfo(
+                state="MERGED", is_draft=False, approved=None, ci=CiStatus.UNKNOWN
+            ),
         ):
             await _phase2_check_prs(state, tasks, gh_proxy, backend)
 
@@ -376,7 +380,9 @@ class TestPhase2CheckPrs:
 
         with patch(
             "taskpull.supervisor._check_pr_state",
-            return_value=PrInfo(state="CLOSED", is_draft=False, approved=None),
+            return_value=PrInfo(
+                state="CLOSED", is_draft=False, approved=None, ci=CiStatus.UNKNOWN
+            ),
         ):
             await _phase2_check_prs(state, tasks, gh_proxy, backend)
 
@@ -403,7 +409,9 @@ class TestPhase2CheckPrs:
 
         with patch(
             "taskpull.supervisor._check_pr_state",
-            return_value=PrInfo(state="OPEN", is_draft=True, approved=False),
+            return_value=PrInfo(
+                state="OPEN", is_draft=True, approved=False, ci=CiStatus.PENDING
+            ),
         ):
             await _phase2_check_prs(state, tasks, gh_proxy, backend)
 

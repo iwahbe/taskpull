@@ -40,7 +40,13 @@ def _build_mcp(handler: Handler) -> FastMCP:
         Calling this tool will terminate the current session.
         """
         task_id = _current_task_id.get()
+        log.info("MCP task_exhausted called for task %s", task_id)
         response = await handler({"command": "task_exhausted", "task_id": task_id})
+        log.info(
+            "MCP task_exhausted handler returned for task %s: %s",
+            task_id,
+            response,
+        )
         if response.get("status") == "ok":
             return "Task marked as exhausted. This session will be terminated."
         return f"Error: {response.get('message', 'unknown error')}"

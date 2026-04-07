@@ -22,6 +22,14 @@ class TaskGoal(enum.Enum):
     NONE = "none"
 
 
+class CiStatus(enum.Enum):
+    UNKNOWN = "unknown"
+    NONE = "none"
+    PASS = "pass"
+    FAIL = "fail"
+    PENDING = "pending"
+
+
 @dataclass
 class TaskState:
     status: TaskStatus = TaskStatus.IDLE
@@ -35,6 +43,7 @@ class TaskState:
     exhaust_count: int = 0
     pr_draft: bool = False
     pr_approved: bool | None = None
+    pr_ci: CiStatus = CiStatus.UNKNOWN
     activity: str | None = None
     proxy_secret: str | None = None
     last_launched_at: int = 0
@@ -52,6 +61,7 @@ class TaskState:
         d = asdict(self)
         d["status"] = self.status.value
         d["goal"] = self.goal.value
+        d["pr_ci"] = self.pr_ci.value
         return d
 
     def exhaust_backoff(self, poll_interval: int) -> float:
@@ -79,6 +89,7 @@ class TaskState:
             raw_status = "active"
         d["status"] = TaskStatus(raw_status)
         d["goal"] = TaskGoal(d.get("goal", "pr"))
+        d["pr_ci"] = CiStatus(d.get("pr_ci", "unknown"))
         # Migrate legacy exhausted bool → exhaust_count.
         if d.pop("exhausted", False) and "exhaust_count" not in d:
             d["exhaust_count"] = 1

@@ -190,9 +190,12 @@ def cmd_list(config):
         else:
             approved = "-"
 
-        rows.append((task_id, status, pr, draft, approved, repo, runs))
+        pr_ci = info.get("pr_ci", "unknown")
+        ci = "-" if pr_ci in ("unknown", "none") else pr_ci
 
-    headers = ("TASK", "STATUS", "PR", "DRAFT", "APPROVED", "DIR", "RUNS")
+        rows.append((task_id, status, pr, draft, approved, ci, repo, runs))
+
+    headers = ("TASK", "STATUS", "PR", "DRAFT", "APPROVED", "CI", "DIR", "RUNS")
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     print(fmt.format(*headers))
@@ -350,6 +353,7 @@ def main() -> None:
         return
 
     if args.command is None:
+        _require_daemon(config)
         from .tui import launch_tui
 
         launch_tui(config)

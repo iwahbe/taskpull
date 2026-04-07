@@ -207,9 +207,7 @@ def _status_label(info: dict[str, Any]) -> tuple[str, int]:
 def _pr_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
     """Return extra lines to display under a task that has an open PR.
 
-    Each entry is (text, curses_color_pair).  Up to 2 lines:
-      1. PR URL
-      2. draft / approval status
+    Each entry is (text, curses_color_pair).
     """
     pr_number = info.get("pr_number")
     if not pr_number:
@@ -221,21 +219,21 @@ def _pr_detail_lines(info: dict[str, Any]) -> list[tuple[str, int]]:
     if pr_url:
         lines.append((f"     {pr_url}", 5))
 
-    tags: list[str] = []
-    pr_draft = info.get("pr_draft", False)
+    if info.get("pr_draft", False):
+        lines.append(("     [draft]", 4))
     pr_approved = info.get("pr_approved")
-
-    if pr_draft:
-        tags.append("draft")
     if pr_approved is True:
-        tags.append("approved")
+        lines.append(("     [approved]", 2))
     elif pr_approved is False:
-        tags.append("not approved")
+        lines.append(("     [not approved]", 5))
 
-    if tags:
-        tag_str = ", ".join(tags)
-        color = 4 if pr_draft else (2 if pr_approved else 5)
-        lines.append((f"     [{tag_str}]", color))
+    pr_ci = info.get("pr_ci")
+    if pr_ci == "pass":
+        lines.append(("     [ci=pass]", 5))
+    elif pr_ci == "fail":
+        lines.append(("     [ci=fail]", 6))
+    elif pr_ci == "pending":
+        lines.append(("     [ci=pending]", 4))
 
     return lines
 

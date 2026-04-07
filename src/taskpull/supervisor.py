@@ -16,7 +16,7 @@ from .hooks import write_hooks_config
 from .http_server import run_http_server
 from .ipc import run_ipc_server
 from .session import SessionBackend
-from .state import TaskGoal, TaskState, TaskStatus, load_state, save_state
+from .state import CiStatus, TaskGoal, TaskState, TaskStatus, load_state, save_state
 from .task import TaskFile, discover_tasks, validate_md_tasks
 from .workspace import (
     cleanup_workspace,
@@ -48,6 +48,47 @@ class PrInfo:
     state: str
     is_draft: bool
     approved: bool | None
+    ci: CiStatus
+
+
+def _compute_ci_status(checks: list[dict[str, Any]]) -> CiStatus:
+    if not checks:
+        return CiStatus.NONE
+    has_failure = False
+    all_done = True
+    for c in checks:
+        bucket = c.get("bucket", "")
+        if bucket == "fail":
+            has_failure = True
+        elif bucket != "pass" and bucket != "skipping":
+            all_done = False
+    if has_failure:
+        return CiStatus.FAIL
+    if all_done:
+        return CiStatus.PASS
+    return CiStatus.PENDING
+
+
+async def _check_pr_ci(repo_path: str, pr_number: int) -> CiStatus:
+    proc = await asyncio.create_subprocess_exec(
+        "gh",
+        "pr",
+        "checks",
+        str(pr_number),
+        "--repo",
+        repo_path,
+        "--required",
+        "--json",
+        "bucket",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        if b"no required checks" in stderr:
+            return CiStatus.NONE
+        return CiStatus.UNKNOWN
+    return _compute_ci_status(json.loads(stdout.decode()))
 
 
 async def _check_pr_state(repo_path: str, pr_number: int) -> PrInfo:
@@ -65,7 +106,9 @@ async def _check_pr_state(repo_path: str, pr_number: int) -> PrInfo:
     )
     stdout, _ = await proc.communicate()
     if proc.returncode != 0:
-        return PrInfo(state="UNKNOWN", is_draft=False, approved=None)
+        return PrInfo(
+            state="UNKNOWN", is_draft=False, approved=None, ci=CiStatus.UNKNOWN
+        )
     data = json.loads(stdout.decode())
     review_decision = data.get("reviewDecision", "")
     if review_decision == "APPROVED":
@@ -74,10 +117,12 @@ async def _check_pr_state(repo_path: str, pr_number: int) -> PrInfo:
         approved = False
     else:
         approved = None
+    ci = await _check_pr_ci(repo_path, pr_number)
     return PrInfo(
         state=data.get("state", "UNKNOWN"),
         is_draft=data.get("isDraft", False),
         approved=approved,
+        ci=ci,
     )
 
 
@@ -123,6 +168,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.pr_url = None
     ts.pr_draft = False
     ts.pr_approved = None
+    ts.pr_ci = CiStatus.UNKNOWN
     ts.workspace = None
     ts.session_id = None
     ts.session_name = None
@@ -272,10 +318,22 @@ async def run(
             }
         if command == "task_exhausted":
             tid: str = request.get("task_id", "")
+            log.info(
+                "task_exhausted handler entered for %s (status=%s, session=%s)",
+                tid,
+                current_state.get(tid, TaskState()).status.value,
+                current_state.get(tid, TaskState()).session_name,
+            )
             ts = current_state.get(tid)
             if ts is None:
                 return {"status": "error", "message": f"unknown task: {tid}"}
             await _cleanup_task(ts, gh_proxy, backend)
+            log.info(
+                "task_exhausted cleanup done for %s (status=%s, session=%s)",
+                tid,
+                ts.status.value,
+                ts.session_name,
+            )
             if ts.adhoc is not None:
                 _reset_task(ts)
                 ts.status = TaskStatus.DONE
@@ -284,7 +342,7 @@ async def run(
                 _reset_task(ts)
             save_state(config.state_file, current_state)
             refresh_event.set()
-            log.info("task_exhausted received for %s", tid)
+            log.info("task_exhausted completed for %s (exhaust_count=%d)", tid, ts.exhaust_count)
             return {"status": "ok"}
         if command == "restart":
             tid = request.get("task_id", "")
@@ -534,6 +592,7 @@ async def _phase2_check_prs(
         pr_info = await _check_pr_state(remote_url, ts.pr_number)
         ts.pr_draft = pr_info.is_draft
         ts.pr_approved = pr_info.approved
+        ts.pr_ci = pr_info.ci
 
         if ts.goal == TaskGoal.PR:
             if pr_info.state == "MERGED":
