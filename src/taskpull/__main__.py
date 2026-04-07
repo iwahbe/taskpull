@@ -334,9 +334,9 @@ def main() -> None:
     new_parser = subparsers.add_parser("new", help="Create a one-time ad-hoc task")
     new_parser.add_argument(
         "--goal",
-        choices=["none", "pr"],
+        choices=["none", "pr", "issue"],
         default="none",
-        help="Task goal: 'pr' to terminate on PR close/merge, 'none' for open-ended (default: none)",
+        help="Task goal: 'pr' to terminate on PR close/merge, 'issue' to terminate on issue creation, 'none' for open-ended (default: none)",
     )
     new_parser.add_argument(
         "--repo-lock",

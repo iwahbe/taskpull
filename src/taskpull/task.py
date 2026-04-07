@@ -4,10 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .state import TaskGoal
 from .workspace import is_repo_url, resolve_local_path
-
-if TYPE_CHECKING:
-    from .state import TaskState
 
 if TYPE_CHECKING:
     from .state import TaskState
@@ -19,6 +17,7 @@ class TaskFile:
     repeat: bool
     prompt: str
     repo_lock: str | None = None
+    goal: TaskGoal = TaskGoal.PR
 
     @property
     def lane_key(self) -> tuple[str, str]:
@@ -57,11 +56,19 @@ def parse_task(path: Path) -> TaskFile:
 
     prompt = "\n".join(lines[close_idx + 1 :]).strip()
 
+    goal_str = fields.get("goal", "pr")
+    try:
+        goal = TaskGoal(goal_str)
+    except ValueError:
+        valid = ", ".join(g.value for g in TaskGoal)
+        raise ValueError(f"{path}: invalid goal '{goal_str}', must be one of: {valid}")
+
     return TaskFile(
         repo=fields["repo"],
         repeat=fields.get("repeat", "false").lower() == "true",
         prompt=prompt,
         repo_lock=fields.get("repo_lock"),
+        goal=goal,
     )
 
 
@@ -88,6 +95,7 @@ def discover_tasks(tasks_dir: Path, state: dict[str, TaskState]) -> dict[str, Ta
                 repeat=False,
                 prompt=ts.adhoc,
                 repo_lock=ts.repo_lock,
+                goal=ts.goal,
             )
     return tasks
 

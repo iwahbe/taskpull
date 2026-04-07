@@ -177,7 +177,7 @@ class TestPhase3CheckSessions:
             ),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.IDLE
         assert state["task-a"].session_name is None
@@ -194,7 +194,7 @@ class TestPhase3CheckSessions:
             ),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.ACTIVE
         assert backend.killed == []
@@ -213,7 +213,7 @@ class TestPhase3CheckSessions:
             ),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.IDLE
         assert backend.killed == ["taskpull-task-a"]
@@ -233,7 +233,7 @@ class TestPhase3CheckSessions:
             ),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.IDLE
         assert state["task-a"].setup_failure_count == 1
@@ -256,7 +256,7 @@ class TestPhase3CheckSessions:
             ),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.BROKEN
         assert state["task-a"].setup_failure_count == 3
@@ -274,10 +274,102 @@ class TestPhase3CheckSessions:
             ),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.BROKEN
         assert state["task-a"].error_message == "segfault"
+
+    @pytest.mark.asyncio
+    async def test_issue_goal_done_when_claude_exits_with_issues(self, tmp_path: Path):
+        backend = FakeBackend()
+        backend.alive_sessions["taskpull-task-a"] = True
+        backend.claude_exited_sessions["taskpull-task-a"] = True
+        gh_proxy = _make_gh_proxy(tmp_path)
+        state = {
+            "task-a": TaskState(
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                session_id="sess-123",
+                goal=TaskGoal.ISSUE,
+                issues=[{"number": 1, "url": "https://github.com/o/r/issues/1"}],
+            ),
+        }
+
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
+
+        assert state["task-a"].status == TaskStatus.DONE
+        assert state["task-a"].issues == []
+        assert backend.killed == ["taskpull-task-a"]
+
+    @pytest.mark.asyncio
+    async def test_issue_goal_resets_when_repeat_and_issues(self, tmp_path: Path):
+        backend = FakeBackend()
+        backend.alive_sessions["taskpull-task-a"] = True
+        backend.claude_exited_sessions["taskpull-task-a"] = True
+        gh_proxy = _make_gh_proxy(tmp_path)
+        state = {
+            "task-a": TaskState(
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                session_id="sess-123",
+                goal=TaskGoal.ISSUE,
+                issues=[{"number": 1, "url": "https://github.com/o/r/issues/1"}],
+            ),
+        }
+        tasks = {
+            "task-a": TaskFile(
+                repo="https://github.com/o/r.git",
+                repeat=True,
+                prompt="find bugs",
+                goal=TaskGoal.ISSUE,
+            ),
+        }
+
+        await _phase3_check_sessions(state, tasks, gh_proxy, backend)
+
+        assert state["task-a"].status == TaskStatus.IDLE
+        assert state["task-a"].exhaust_count == 0
+        assert state["task-a"].issues == []
+
+    @pytest.mark.asyncio
+    async def test_issue_goal_idle_when_no_issues(self, tmp_path: Path):
+        backend = FakeBackend()
+        backend.alive_sessions["taskpull-task-a"] = True
+        backend.claude_exited_sessions["taskpull-task-a"] = True
+        gh_proxy = _make_gh_proxy(tmp_path)
+        state = {
+            "task-a": TaskState(
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                session_id="sess-123",
+                goal=TaskGoal.ISSUE,
+                issues=[],
+            ),
+        }
+
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
+
+        assert state["task-a"].status == TaskStatus.IDLE
+        assert backend.killed == ["taskpull-task-a"]
+
+    @pytest.mark.asyncio
+    async def test_issue_goal_done_when_session_dead_with_issues(self, tmp_path: Path):
+        backend = FakeBackend()
+        gh_proxy = _make_gh_proxy(tmp_path)
+        state = {
+            "task-a": TaskState(
+                status=TaskStatus.ACTIVE,
+                session_name="taskpull-task-a",
+                goal=TaskGoal.ISSUE,
+                issues=[{"number": 5, "url": "https://github.com/o/r/issues/5"}],
+            ),
+        }
+
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
+
+        assert state["task-a"].status == TaskStatus.DONE
+        assert state["task-a"].issues == []
+        assert backend.killed == ["taskpull-task-a"]
 
     @pytest.mark.asyncio
     async def test_skips_non_active_tasks(self, tmp_path: Path):
@@ -288,7 +380,7 @@ class TestPhase3CheckSessions:
             "task-b": TaskState(status=TaskStatus.DONE),
         }
 
-        await _phase3_check_sessions(state, gh_proxy, backend)
+        await _phase3_check_sessions(state, {}, gh_proxy, backend)
 
         assert state["task-a"].status == TaskStatus.IDLE
         assert state["task-b"].status == TaskStatus.DONE

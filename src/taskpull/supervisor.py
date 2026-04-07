@@ -36,10 +36,16 @@ When your work is ready, create a descriptively named branch, push it, and open 
   gh pr create --fill
 """
 
+ISSUE_INSTRUCTIONS = """
+
+When your work is ready, create a GitHub issue:
+  gh issue create --title "Your descriptive title" --body "Issue body"
+"""
+
 REPEAT_SUFFIX = """
 If there is nothing left to do because the task is already completed, call
 the task_exhausted MCP tool.  Do NOT call task_exhausted when you have
-finished working on a PR — only call it when there is no work to do at all.
+finished working on a PR or issue — only call it when there is no work to do at all.
 """
 
 
@@ -157,6 +163,8 @@ def _build_prompt(task: TaskFile, goal: TaskGoal) -> str:
     prompt = task.prompt
     if goal == TaskGoal.PR:
         prompt += PR_INSTRUCTIONS
+    elif goal == TaskGoal.ISSUE:
+        prompt += ISSUE_INSTRUCTIONS
     if task.repeat:
         prompt += REPEAT_SUFFIX
     return prompt
@@ -175,6 +183,7 @@ def _reset_task(ts: TaskState) -> None:
     ts.activity = None
     ts.proxy_secret = None
     ts.error_message = None
+    ts.issues = []
 
 
 async def _get_gh_token() -> str:
@@ -517,8 +526,13 @@ async def run(
 
             tasks = discover_tasks(config.tasks_dir, current_state)
 
+            for task_id, task in tasks.items():
+                ts = current_state.get(task_id)
+                if ts is not None and ts.adhoc is None:
+                    ts.goal = task.goal
+
             await _phase2_check_prs(current_state, tasks, gh_proxy, backend)
-            await _phase3_check_sessions(current_state, gh_proxy, backend)
+            await _phase3_check_sessions(current_state, tasks, gh_proxy, backend)
             await _phase4_launch(
                 config, current_state, tasks, claude_token, gh_proxy, backend
             )
@@ -616,6 +630,7 @@ async def _phase2_check_prs(
 
 async def _phase3_check_sessions(
     state: dict[str, TaskState],
+    tasks: dict[str, TaskFile],
     gh_proxy: GHProxy,
     backend: SessionBackend,
 ) -> None:
@@ -646,9 +661,23 @@ async def _phase3_check_sessions(
                         _reset_task(ts)
                         ts.error_message = error_output
                 else:
-                    log.info("  %s: claude exited, resetting to idle", task_id)
                     await _cleanup_task(ts, gh_proxy, backend)
-                    _reset_task(ts)
+                    if ts.goal == TaskGoal.ISSUE and ts.issues:
+                        task = tasks.get(task_id)
+                        log.info(
+                            "  %s: claude exited with %d issue(s), marking done",
+                            task_id,
+                            len(ts.issues),
+                        )
+                        if task and task.repeat:
+                            ts.exhaust_count = 0
+                            _reset_task(ts)
+                        else:
+                            _reset_task(ts)
+                            ts.status = TaskStatus.DONE
+                    else:
+                        log.info("  %s: claude exited, resetting to idle", task_id)
+                        _reset_task(ts)
             continue
 
         # Container is dead. Capture exit info before cleanup removes it.
@@ -669,8 +698,22 @@ async def _phase3_check_sessions(
             ts.status = TaskStatus.BROKEN
             ts.error_message = error_output
         else:
-            log.info("  %s: session gone, resetting to idle", task_id)
-            _reset_task(ts)
+            if ts.goal == TaskGoal.ISSUE and ts.issues:
+                task = tasks.get(task_id)
+                log.info(
+                    "  %s: session gone with %d issue(s), marking done",
+                    task_id,
+                    len(ts.issues),
+                )
+                if task and task.repeat:
+                    ts.exhaust_count = 0
+                    _reset_task(ts)
+                else:
+                    _reset_task(ts)
+                    ts.status = TaskStatus.DONE
+            else:
+                log.info("  %s: session gone, resetting to idle", task_id)
+                _reset_task(ts)
 
 
 async def _phase4_launch(
@@ -693,7 +736,7 @@ async def _phase4_launch(
     # Ensure all tasks have state entries.
     for task_id, task in tasks.items():
         if task_id not in state:
-            state[task_id] = TaskState()
+            state[task_id] = TaskState(goal=task.goal)
 
     # Group eligible tasks by lane.
     lane_candidates: dict[tuple[str, str], list[tuple[str, TaskFile, TaskState]]] = {}
@@ -802,7 +845,6 @@ async def _phase4_launch(
             ts.pr_number = None
             ts.pr_url = None
             ts.pr_approved = None
-            ts.issues = []
             ts.activity = "initializing"
             ts.proxy_secret = proxy_secret
 

@@ -20,6 +20,7 @@ class TaskStatus(enum.Enum):
 class TaskGoal(enum.Enum):
     PR = "pr"
     NONE = "none"
+    ISSUE = "issue"
 
 
 class CiStatus(enum.Enum):
