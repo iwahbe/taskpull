@@ -240,7 +240,14 @@ class GHProxy:
         inject_token = False
         if proxy_token is not None:
             allowed_repo = self._token_map.get(proxy_token)
+            task_id = self._task_map.get(proxy_token, "?")
             if allowed_repo is None:
+                log.warning(
+                    "GH proxy: %s %s — invalid proxy token (task=%s)",
+                    method,
+                    path,
+                    task_id,
+                )
                 await self._send_error(writer, 403, "Invalid proxy token")
                 return
 
@@ -248,9 +255,18 @@ class GHProxy:
                 method, path, body, allowed_repo, proxy_token
             )
             if not allowed:
-                log.warning("GH proxy blocked: %s %s — %s", method, path, reason)
+                log.warning(
+                    "GH proxy blocked: %s %s — %s (task=%s, repo=%s)",
+                    method,
+                    path,
+                    reason,
+                    task_id,
+                    allowed_repo,
+                )
                 await self._send_error(writer, 403, reason)
                 return
+        else:
+            log.debug("GH proxy: %s %s — no proxy token in request", method, path)
 
         forwarded_path = path
         if forwarded_path.startswith("/api/v3"):
@@ -308,7 +324,15 @@ class GHProxy:
             writer.write(raw)
             await writer.drain()
 
-            log.info("GH proxy: %s %s -> forwarded (%d)", method, path, status_code)
+            task_id = self._task_map.get(proxy_token or "", "anon")
+            log.info(
+                "GH proxy: %s %s -> forwarded (%d) [task=%s, inject=%s]",
+                method,
+                path,
+                status_code,
+                task_id,
+                inject_token,
+            )
 
             if (
                 forwarded_path == "/graphql"
