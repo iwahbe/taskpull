@@ -52,6 +52,17 @@ def write_hooks_config(
                     ],
                 }
             ],
+            "PostToolUseFailure": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": notify_cmd,
+                        }
+                    ],
+                }
+            ],
             "Stop": [
                 {
                     "matcher": "",

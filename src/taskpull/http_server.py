@@ -72,7 +72,7 @@ async def _hook_notify(request: Request) -> Response:
     event: dict[str, str] | None = None
     if event_name == "PreToolUse":
         event = {"type": "activity", "activity": "active", "timestamp": timestamp}
-    elif event_name == "Stop":
+    elif event_name in ("Stop", "PostToolUseFailure"):
         event = {"type": "activity", "activity": "idle", "timestamp": timestamp}
     elif event_name == "SessionStart":
         event = {

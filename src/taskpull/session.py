@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Protocol
@@ -14,6 +16,21 @@ log = logging.getLogger(__name__)
 
 _PROMPT_FILENAME = ".taskpull-prompt.txt"
 _STAGING_MOUNT = "/opt/taskpull"
+
+
+def check_docker() -> None:
+    """Verify the Docker daemon is reachable. Exits with an error if not."""
+    result = subprocess.run(
+        ["docker", "info"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        print(
+            f"cannot connect to Docker daemon: {result.stderr.decode().strip()}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 class SessionBackend(Protocol):

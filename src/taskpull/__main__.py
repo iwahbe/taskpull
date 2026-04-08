@@ -32,6 +32,10 @@ def cmd_start(config):
 
     claude_token = get_claude_token()
 
+    from .session import check_docker
+
+    check_docker()
+
     ready_fd = daemonize(config.log_file, config.pid_file)
 
     logging.basicConfig(
