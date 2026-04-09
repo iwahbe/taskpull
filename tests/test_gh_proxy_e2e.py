@@ -12,6 +12,7 @@ import json
 import ssl
 import subprocess
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -68,44 +69,53 @@ class TestCheckPermission:
         self.proxy = GHProxy("fake-gh-token", ca_cert, server_cert, server_key)
         self.token = self.proxy.register_task("o/r", "test-task")
 
-    def _check(self, method, path, body, allowed_repo):
-        return self.proxy._check_permission(
+    async def _check(self, method, path, body, allowed_repo):
+        return await self.proxy._check_permission(
             method, path, body, allowed_repo, self.token
         )
 
-    def test_get_allowed(self):
-        allowed, _, inject = self._check("GET", "/repos/o/r/issues", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_get_allowed(self):
+        allowed, _, inject = await self._check("GET", "/repos/o/r/issues", b"", "o/r")
         assert allowed is True
         assert inject is True
 
-    def test_post_to_allowed_repo(self):
-        allowed, _, inject = self._check("POST", "/repos/o/r/issues", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_post_to_allowed_repo(self):
+        allowed, _, inject = await self._check("POST", "/repos/o/r/issues", b"", "o/r")
         assert allowed is True
         assert inject is True
 
-    def test_post_to_wrong_repo(self):
-        allowed, _, inject = self._check("POST", "/repos/other/repo/issues", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_post_to_wrong_repo(self):
+        allowed, _, inject = await self._check(
+            "POST", "/repos/other/repo/issues", b"", "o/r"
+        )
         assert allowed is True
         assert inject is False
 
-    def test_post_to_non_repo_endpoint(self):
-        allowed, _, inject = self._check("POST", "/user/repos", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_post_to_non_repo_endpoint(self):
+        allowed, _, inject = await self._check("POST", "/user/repos", b"", "o/r")
         assert allowed is True
         assert inject is False
 
-    def test_graphql_query_allowed(self):
+    @pytest.mark.asyncio
+    async def test_graphql_query_allowed(self):
         body = json.dumps({"query": "{ viewer { login } }"}).encode()
-        allowed, _, inject = self._check("POST", "/graphql", body, "o/r")
+        allowed, _, inject = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is True
         assert inject is True
 
-    def test_graphql_non_allowlisted_mutation_blocked(self):
+    @pytest.mark.asyncio
+    async def test_graphql_non_allowlisted_mutation_blocked(self):
         body = json.dumps({"query": "mutation { createIssue { id } }"}).encode()
-        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        allowed, reason, _ = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
         assert "createIssue" in reason
 
-    def test_graphql_allowlisted_mutation_with_valid_node_id(self):
+    @pytest.mark.asyncio
+    async def test_graphql_allowlisted_mutation_with_valid_node_id(self):
         self.proxy._repo_node_cache[self.token] = {"R_abc123": "o/r"}
         body = json.dumps(
             {
@@ -113,22 +123,27 @@ class TestCheckPermission:
                 "variables": {"input": {"repositoryId": "R_abc123"}},
             }
         ).encode()
-        allowed, _, inject = self._check("POST", "/graphql", body, "o/r")
+        allowed, _, inject = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is True
         assert inject is True
 
-    def test_graphql_allowlisted_mutation_with_unknown_node_id(self):
+    @pytest.mark.asyncio
+    async def test_graphql_allowlisted_mutation_with_unknown_node_id(self):
         body = json.dumps(
             {
                 "query": "mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }",
                 "variables": {"input": {"repositoryId": "R_unknown"}},
             }
         ).encode()
-        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        with patch.object(
+            self.proxy, "_resolve_node_repo", new_callable=AsyncMock, return_value=None
+        ):
+            allowed, reason, _ = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
         assert "Unknown repository node ID" in reason
 
-    def test_graphql_allowlisted_mutation_with_wrong_repo_node_id(self):
+    @pytest.mark.asyncio
+    async def test_graphql_allowlisted_mutation_with_wrong_repo_node_id(self):
         self.proxy._repo_node_cache[self.token] = {"R_abc123": "other/repo"}
         body = json.dumps(
             {
@@ -136,80 +151,100 @@ class TestCheckPermission:
                 "variables": {"input": {"repositoryId": "R_abc123"}},
             }
         ).encode()
-        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        allowed, reason, _ = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
         assert "other/repo" in reason
 
-    def test_graphql_allowlisted_mutation_missing_repo_id(self):
+    @pytest.mark.asyncio
+    async def test_graphql_allowlisted_mutation_missing_repo_id(self):
         body = json.dumps(
             {
                 "query": "mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }",
                 "variables": {"input": {}},
             }
         ).encode()
-        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        allowed, reason, _ = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
         assert "Missing repositoryId" in reason
 
-    def test_api_v3_prefix_stripped(self):
-        allowed, _, inject = self._check("POST", "/api/v3/repos/o/r/pulls", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_api_v3_prefix_stripped(self):
+        allowed, _, inject = await self._check(
+            "POST", "/api/v3/repos/o/r/pulls", b"", "o/r"
+        )
         assert allowed is True
         assert inject is True
 
-    def test_case_insensitive_repo_match(self):
-        allowed, _, inject = self._check(
+    @pytest.mark.asyncio
+    async def test_case_insensitive_repo_match(self):
+        allowed, _, inject = await self._check(
             "POST", "/repos/Owner/Repo/issues", b"", "owner/repo"
         )
         assert allowed is True
         assert inject is True
 
-    def test_delete_to_allowed_repo(self):
-        allowed, _, inject = self._check("DELETE", "/repos/o/r/issues/1", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_delete_to_allowed_repo(self):
+        allowed, _, inject = await self._check(
+            "DELETE", "/repos/o/r/issues/1", b"", "o/r"
+        )
         assert allowed is True
         assert inject is True
 
-    def test_graphql_unparseable_body(self):
-        allowed, reason, _ = self._check("POST", "/graphql", b"not json", "o/r")
+    @pytest.mark.asyncio
+    async def test_graphql_unparseable_body(self):
+        allowed, reason, _ = await self._check("POST", "/graphql", b"not json", "o/r")
         assert allowed is False
         assert "parse" in reason.lower()
 
-    def test_graphql_unparseable_query(self):
+    @pytest.mark.asyncio
+    async def test_graphql_unparseable_query(self):
         body = json.dumps({"query": "not valid graphql {{{"}).encode()
-        allowed, reason, _ = self._check("POST", "/graphql", body, "o/r")
+        allowed, reason, _ = await self._check("POST", "/graphql", body, "o/r")
         assert allowed is False
         assert "parse" in reason.lower()
 
-    def test_git_upload_pack_allowed(self):
-        allowed, _, inject = self._check("GET", "/o/r.git/info/refs", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_git_upload_pack_allowed(self):
+        allowed, _, inject = await self._check("GET", "/o/r.git/info/refs", b"", "o/r")
         assert allowed is True
         assert inject is True
 
-    def test_git_receive_pack_post_allowed_repo(self):
-        allowed, _, inject = self._check(
+    @pytest.mark.asyncio
+    async def test_git_receive_pack_post_allowed_repo(self):
+        allowed, _, inject = await self._check(
             "POST", "/o/r.git/git-receive-pack", b"", "o/r"
         )
         assert allowed is True
         assert inject is True
 
-    def test_git_receive_pack_post_wrong_repo(self):
-        allowed, _, inject = self._check(
+    @pytest.mark.asyncio
+    async def test_git_receive_pack_post_wrong_repo(self):
+        allowed, _, inject = await self._check(
             "POST", "/other/repo.git/git-receive-pack", b"", "o/r"
         )
         assert allowed is True
         assert inject is False
 
-    def test_git_path_without_dotgit(self):
-        allowed, _, inject = self._check("POST", "/o/r/git-receive-pack", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_git_path_without_dotgit(self):
+        allowed, _, inject = await self._check(
+            "POST", "/o/r/git-receive-pack", b"", "o/r"
+        )
         assert allowed is True
         assert inject is True
 
-    def test_git_upload_pack_post(self):
-        allowed, _, inject = self._check("POST", "/o/r.git/git-upload-pack", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_git_upload_pack_post(self):
+        allowed, _, inject = await self._check(
+            "POST", "/o/r.git/git-upload-pack", b"", "o/r"
+        )
         assert allowed is True
         assert inject is True
 
-    def test_git_receive_pack_get_info_refs(self):
-        allowed, _, inject = self._check("GET", "/o/r.git/info/refs", b"", "o/r")
+    @pytest.mark.asyncio
+    async def test_git_receive_pack_get_info_refs(self):
+        allowed, _, inject = await self._check("GET", "/o/r.git/info/refs", b"", "o/r")
         assert allowed is True
         assert inject is True
 

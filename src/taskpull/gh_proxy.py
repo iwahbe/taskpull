@@ -251,7 +251,7 @@ class GHProxy:
                 await self._send_error(writer, 403, "Invalid proxy token")
                 return
 
-            allowed, reason, inject_token = self._check_permission(
+            allowed, reason, inject_token = await self._check_permission(
                 method, path, body, allowed_repo, proxy_token
             )
             if not allowed:
@@ -497,7 +497,7 @@ class GHProxy:
                 ]
         return None
 
-    def _check_permission(
+    async def _check_permission(
         self,
         method: str,
         path: str,
@@ -547,6 +547,8 @@ class GHProxy:
 
                 token_cache = self._repo_node_cache.get(proxy_token, {})
                 cached_repo = token_cache.get(node_id)
+                if cached_repo is None:
+                    cached_repo = await self._resolve_node_repo(node_id, proxy_token)
                 if cached_repo is None:
                     return False, f"Unknown repository node ID: {node_id}", False
                 if cached_repo.lower() != allowed_repo.lower():
@@ -720,6 +722,54 @@ class GHProxy:
             "GH proxy: detected GraphQL issue #%d for task %s", issue_number, task_id
         )
         await self._on_issue_created(task_id, issue_number, issue_url)
+
+    async def _resolve_node_repo(self, node_id: str, proxy_token: str) -> str | None:
+        """Resolve a GitHub node ID to owner/repo via the API.
+
+        Caches the result on success so future lookups are instant.
+        """
+        query = json.dumps(
+            {
+                "query": "query($id:ID!){node(id:$id){...on Repository{name owner{login}}}}",
+                "variables": {"id": node_id},
+            }
+        )
+        gh_ssl: ssl.SSLContext | None = ssl.create_default_context()
+        if self._upstream_port != 443:
+            gh_ssl = None
+        try:
+            reader, writer = await asyncio.open_connection(
+                self._upstream_host, self._upstream_port, ssl=gh_ssl
+            )
+            request = (
+                f"POST /graphql HTTP/1.1\r\n"
+                f"host: {self._upstream_host}\r\n"
+                f"authorization: token {self._gh_token}\r\n"
+                f"content-type: application/json\r\n"
+                f"content-length: {len(query)}\r\n"
+                f"connection: close\r\n"
+                f"\r\n"
+                f"{query}"
+            )
+            writer.write(request.encode())
+            await writer.drain()
+            _, _, body = await self._read_response(reader)
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            log.warning("Failed to resolve node ID %s", node_id, exc_info=True)
+            return None
+        try:
+            data = json.loads(body)
+            node = data["data"]["node"]
+            owner_repo = f"{node['owner']['login']}/{node['name']}"
+        except (json.JSONDecodeError, KeyError, TypeError):
+            log.warning("Could not parse node resolution for %s: %s", node_id, body)
+            return None
+        cache = self._repo_node_cache.setdefault(proxy_token, {})
+        cache[node_id] = owner_repo
+        log.info("Resolved node %s -> %s", node_id, owner_repo)
+        return owner_repo
 
     def _cache_repo_node_ids(self, proxy_token: str, response_body: bytes) -> None:
         try:
