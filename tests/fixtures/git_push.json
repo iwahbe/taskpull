@@ -1,0 +1,96 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://github.com/iwahbe/taskpull.git/info/refs?service=git-receive-pack",
+      "path": "/iwahbe/taskpull.git/info/refs?service=git-receive-pack",
+      "headers": {
+        "user-agent": "git/2.39.5",
+        "accept": "*/*",
+        "accept-encoding": "deflate, gzip, br, zstd",
+        "pragma": "no-cache"
+      },
+      "body": ""
+    },
+    "response": {
+      "status_code": 401,
+      "headers": {
+        "server": "GitHub-Babel/3.0",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "content-type": "text/plain; charset=UTF-8",
+        "www-authenticate": "Basic realm=\"GitHub\"",
+        "content-length": "26",
+        "date": "Fri, 10 Apr 2026 21:21:32 GMT",
+        "x-frame-options": "DENY",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+        "x-github-request-id": "4FF3:FF064:1CAD839:145A814:69D969DC"
+      },
+      "body": "No anonymous write access."
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://github.com/iwahbe/taskpull.git/info/refs?service=git-receive-pack",
+      "path": "/iwahbe/taskpull.git/info/refs?service=git-receive-pack",
+      "headers": {
+        "authorization": "REDACTED",
+        "user-agent": "git/2.39.5",
+        "accept": "*/*",
+        "accept-encoding": "deflate, gzip, br, zstd",
+        "pragma": "no-cache"
+      },
+      "body": ""
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "server": "GitHub-Babel/3.0",
+        "content-type": "application/x-git-receive-pack-advertisement",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "expires": "Fri, 01 Jan 1980 00:00:00 GMT",
+        "pragma": "no-cache",
+        "cache-control": "no-cache, max-age=0, must-revalidate",
+        "vary": "Accept-Encoding",
+        "date": "Fri, 10 Apr 2026 21:21:32 GMT",
+        "x-frame-options": "DENY",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+        "x-github-request-id": "4FF3:FF064:1CAD9AF:145A8FF:69D969DC"
+      },
+      "body": "001f# service=git-receive-pack\n0000012617e9f1dc601f600f3d663336f8857931241f74ee refs/heads/main\u0000report-status report-status-v2 delete-refs side-band-64k ofs-delta atomic object-format=sha1 quiet agent=github/spokes-receive-pack-acac8763c60f636c44baaf5c3887895cf5f55c30 session-id=4FF3:FF064:1CAD9AF:145A8FF:69D969DC push-options\n003e9e46c4b8846cd3cde1a5218e84c504d4ac5203b1 refs/tags/v0.1.0\n0000"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://github.com/iwahbe/taskpull.git/git-receive-pack",
+      "path": "/iwahbe/taskpull.git/git-receive-pack",
+      "headers": {
+        "authorization": "REDACTED",
+        "user-agent": "git/2.39.5",
+        "accept-encoding": "deflate, gzip, br, zstd",
+        "content-type": "application/x-git-receive-pack-request",
+        "accept": "application/x-git-receive-pack-result",
+        "content-length": "64100"
+      },
+      "body": "REMOVED FOR SIZE"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "server": "GitHub-Babel/3.0",
+        "content-type": "application/x-git-receive-pack-result",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "expires": "Fri, 01 Jan 1980 00:00:00 GMT",
+        "pragma": "no-cache",
+        "cache-control": "no-cache, max-age=0, must-revalidate",
+        "vary": "Accept-Encoding",
+        "date": "Fri, 10 Apr 2026 21:21:33 GMT",
+        "x-frame-options": "DENY",
+        "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+        "x-github-request-id": "4FF3:FF064:1CADDDA:145ABE4:69D969DC"
+      },
+      "body": "0006\u0002\u00000013\u0001000eunpack ok\n002d\u00010028ok refs/heads/test/capture-git-push\n0097\u0002\nCreate a pull request for 'test/capture-git-push' on GitHub by visiting:\n     https://github.com/iwahbe/taskpull/pull/new/test/capture-git-push\n\n0009\u000100000000"
+    }
+  }
+]

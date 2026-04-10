@@ -59,6 +59,8 @@ RUN useradd -m -s /bin/bash worker
 USER worker
 """
 
+_IMAGE_NAME = "capture-gh-worker"
+
 _REDACT_HEADERS = {"authorization", "x-oauth-scopes", "x-oauth-client-id"}
 
 
@@ -213,9 +215,6 @@ async def main() -> None:
         "--port", type=int, default=9123, help="Host port for the reverse proxy"
     )
     parser.add_argument(
-        "--docker-image", default="capture-gh-worker", help="Docker image to use"
-    )
-    parser.add_argument(
         "command",
         nargs="+",
         help="Command to run inside the container (e.g. gh issue create ...)",
@@ -230,8 +229,8 @@ async def main() -> None:
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Building Docker image {args.docker_image}...")
-    await _build_image(args.docker_image)
+    print(f"Building Docker image {_IMAGE_NAME}...")
+    await _build_image(_IMAGE_NAME)
 
     with tempfile.TemporaryDirectory(prefix="capture-gh-") as tmpdir:
         tmp = Path(tmpdir)
@@ -289,11 +288,15 @@ async def main() -> None:
                 "net.ipv4.ip_unprivileged_port_start=0",
                 "-v",
                 f"{staging}:/opt/taskpull",
+                "-v",
+                f"{Path.cwd()}:/workspace",
+                "-w",
+                "/workspace",
                 "-e",
                 f"GITHUB_TOKEN={gh_token}",
                 "-e",
                 f"GH_TOKEN={gh_token}",
-                args.docker_image,
+                _IMAGE_NAME,
                 "bash",
                 "-c",
                 "cat /etc/ssl/certs/ca-certificates.crt"
