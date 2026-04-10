@@ -67,13 +67,6 @@ class RemoveTask:
 
 
 @dataclass(frozen=True)
-class SessionInitializing:
-    """A session has started initializing."""
-
-    session_id: SessionID
-
-
-@dataclass(frozen=True)
 class SessionPaused:
     """A session has been paused."""
 
@@ -184,7 +177,6 @@ class WakeTask:
 EngineEvent = Union[
     NewTask,
     RemoveTask,
-    SessionInitializing,
     SessionPaused,
     SessionUnpaused,
     SessionWorking,

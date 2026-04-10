@@ -7,7 +7,6 @@ receive the following events:
     Event =
           | NewTask(name, prompt, goal, location, key, repeat, source) # Register a new task to be completed, possibly repeating, may override an existing task. Source may be file-based or ad-hock
           | RemoveTask(name)                                           # De-register a task
-          | SessionInitializing(session_id)                            # A session has started initializing
           | SessionPaused(session_id)                                  # A session has been paused
           | SessionUnpaused(session_id)                                # A session has been unpaused
           | SessionWorking(session_id)                                 # A session is working
@@ -141,7 +140,7 @@ races in the engine itself.
 
 The session manager owns the docker sessions and their status. It implements
 `engine.SessionManager`. On creation, it accepts a `asyncio.Queue` that is uses to enqueue
-events observed (`SessionInitializing`, `SessionTerminated`, etc.). In addition to
+events observed (`SessionTerminated`, `SessionWorking`, etc.). In addition to
 `engine.SessionManager`, the session manager implements the `__enter__` and `__exit__`
 protocol to manage it's background polling tasks & the servers associated with the GH
 Proxy & `claude` hook & MCP handlers. To enter, the session manager needs to stand up its
