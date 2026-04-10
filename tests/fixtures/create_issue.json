@@ -1,0 +1,98 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "x-github-api-version": "2022-11-28",
+        "graphql-features": "merge_queue",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-type": "application/json; charset=utf-8",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "authorization": "token REDACTED",
+        "content-length": "276",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"\\n\\tquery IssueRepositoryInfo($owner: String!, $name: String!) {\\n\\t\\trepository(owner: $owner, name: $name) {\\n\\t\\t\\tid\\n\\t\\t\\tname\\n\\t\\t\\towner { login }\\n\\t\\t\\thasIssuesEnabled\\n\\t\\t\\tviewerPermission\\n\\t\\t}\\n\\t}\",\"variables\":{\"name\":\"taskpull\",\"owner\":\"iwahbe\"}}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Fri, 10 Apr 2026 20:38:41 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4981",
+        "x-ratelimit-reset": "1775857058",
+        "x-ratelimit-used": "19",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "4F28:34F638:C26D98:A87D1F:69D95FD1"
+      },
+      "body": "{\"data\":{\"repository\":{\"id\":\"R_kgDORru3Uw\",\"name\":\"taskpull\",\"owner\":{\"login\":\"iwahbe\"},\"hasIssuesEnabled\":true,\"viewerPermission\":\"ADMIN\"}}}"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "graphql-features": "merge_queue",
+        "authorization": "token REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-type": "application/json; charset=utf-8",
+        "time-zone": "Etc/UTC",
+        "content-length": "349",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"\\n\\tmutation IssueCreate($input: CreateIssueInput!) {\\n\\t\\tcreateIssue(input: $input) {\\n\\t\\t\\tissue {\\n\\t\\t\\t\\tid\\n\\t\\t\\t\\turl\\n\\t\\t\\t}\\n\\t\\t}\\n\\t}\",\"variables\":{\"input\":{\"body\":\"This is a test issue created to capture GH API traffic for proxy tests. Safe to close.\",\"repositoryId\":\"R_kgDORru3Uw\",\"title\":\"Test issue for proxy capture\"}}}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Fri, 10 Apr 2026 20:38:42 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4980",
+        "x-ratelimit-reset": "1775857058",
+        "x-ratelimit-used": "20",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "4F28:34F638:C26F96:A87EF0:69D95FD1"
+      },
+      "body": "{\"data\":{\"createIssue\":{\"issue\":{\"id\":\"I_kwDORru3U8780gDh\",\"url\":\"https://github.com/iwahbe/taskpull/issues/1\"}}}}"
+    }
+  }
+]
