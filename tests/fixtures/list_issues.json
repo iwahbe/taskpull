@@ -1,0 +1,50 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "time-zone": "Etc/UTC",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "graphql-features": "merge_queue",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "830",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"fragment issue on Issue {number,title,url,state,updatedAt,labels(first:100){nodes{id,name,description,color},totalCount},stateReason}\\n\\tquery IssueList($owner: String!, $repo: String!, $limit: Int, $endCursor: String, $states: [IssueState!] = OPEN, $assignee: String, $author: String, $mention: String) {\\n\\t\\trepository(owner: $owner, name: $repo) {\\n\\t\\t\\thasIssuesEnabled\\n\\t\\t\\tissues(first: $limit, after: $endCursor, orderBy: {field: CREATED_AT, direction: DESC}, states: $states, filterBy: {assignee: $assignee, createdBy: $author, mentioned: $mention}) {\\n\\t\\t\\t\\ttotalCount\\n\\t\\t\\t\\tnodes {\\n\\t\\t\\t\\t\\t...issue\\n\\t\\t\\t\\t}\\n\\t\\t\\t\\tpageInfo {\\n\\t\\t\\t\\t\\thasNextPage\\n\\t\\t\\t\\t\\tendCursor\\n\\t\\t\\t\\t}\\n\\t\\t\\t}\\n\\t\\t}\\n\\t}\\n\\t\",\"variables\":{\"limit\":30,\"owner\":\"iwahbe\",\"repo\":\"taskpull\",\"states\":[\"OPEN\",\"CLOSED\"]}}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:03:27 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4808",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "192",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "4FF6:302F13:1A773C3:1755567:69D98FCF"
+      },
+      "body": "{\"data\":{\"repository\":{\"hasIssuesEnabled\":true,\"issues\":{\"totalCount\":4,\"nodes\":[{\"number\":7,\"title\":\"REST test issue\",\"url\":\"https://github.com/iwahbe/taskpull/issues/7\",\"state\":\"OPEN\",\"updatedAt\":\"2026-04-11T00:03:16Z\",\"labels\":{\"nodes\":[],\"totalCount\":0},\"stateReason\":null},{\"number\":5,\"title\":\"Edit test issue (graphql updated)\",\"url\":\"https://github.com/iwahbe/taskpull/issues/5\",\"state\":\"CLOSED\",\"updatedAt\":\"2026-04-11T00:01:56Z\",\"labels\":{\"nodes\":[],\"totalCount\":0},\"stateReason\":\"NOT_PLANNED\"},{\"number\":3,\"title\":\"REST test issue\",\"url\":\"https://github.com/iwahbe/taskpull/issues/3\",\"state\":\"CLOSED\",\"updatedAt\":\"2026-04-10T23:58:26Z\",\"labels\":{\"nodes\":[],\"totalCount\":0},\"stateReason\":\"COMPLETED\"},{\"number\":1,\"title\":\"Test issue for proxy capture\",\"url\":\"https://github.com/iwahbe/taskpull/issues/1\",\"state\":\"CLOSED\",\"updatedAt\":\"2026-04-10T20:40:49Z\",\"labels\":{\"nodes\":[],\"totalCount\":0},\"stateReason\":\"NOT_PLANNED\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"Y3Vyc29yOnYyOpK0MjAyNi0wNC0xMFQyMDozODo0MlrO_NIA4Q==\"}}}}}"
+    }
+  }
+]

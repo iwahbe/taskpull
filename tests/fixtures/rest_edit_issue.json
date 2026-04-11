@@ -1,0 +1,52 @@
+[
+  {
+    "request": {
+      "method": "PATCH",
+      "url": "https://api.github.com/repos/iwahbe/taskpull/issues/5",
+      "path": "/repos/iwahbe/taskpull/issues/5",
+      "headers": {
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "GitHub CLI 2.89.0",
+        "time-zone": "Etc/UTC",
+        "content-type": "application/json; charset=utf-8",
+        "accept": "*/*",
+        "authorization": "REDACTED",
+        "content-length": "68",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"body\":\"Updated body via REST\",\"title\":\"Edit test issue (updated)\"}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:01:28 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, max-age=60, s-maxage=60",
+        "vary": "Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With",
+        "etag": "W/\"ee6c4d25db59bc7b7c79d8e0fa85f6fc24d10d940f78050847d301d0e1eb335e\"",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v3; format=json",
+        "x-github-api-version-selected": "2022-11-28",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4984",
+        "x-ratelimit-reset": "1775868650",
+        "x-ratelimit-used": "16",
+        "x-ratelimit-resource": "core",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "5034:1869D9:1B57296:182F01A:69D98F57"
+      },
+      "body": "{\"url\":\"https://api.github.com/repos/iwahbe/taskpull/issues/5\",\"repository_url\":\"https://api.github.com/repos/iwahbe/taskpull\",\"labels_url\":\"https://api.github.com/repos/iwahbe/taskpull/issues/5/labels{/name}\",\"comments_url\":\"https://api.github.com/repos/iwahbe/taskpull/issues/5/comments\",\"events_url\":\"https://api.github.com/repos/iwahbe/taskpull/issues/5/events\",\"html_url\":\"https://github.com/iwahbe/taskpull/issues/5\",\"id\":4242267268,\"node_id\":\"I_kwDORru3U87829yE\",\"number\":5,\"title\":\"Edit test issue (updated)\",\"user\":{\"login\":\"iwahbe\",\"id\":22222529,\"node_id\":\"MDQ6VXNlcjIyMjIyNTI5\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/22222529?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/iwahbe\",\"html_url\":\"https://github.com/iwahbe\",\"followers_url\":\"https://api.github.com/users/iwahbe/followers\",\"following_url\":\"https://api.github.com/users/iwahbe/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/iwahbe/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/iwahbe/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/iwahbe/subscriptions\",\"organizations_url\":\"https://api.github.com/users/iwahbe/orgs\",\"repos_url\":\"https://api.github.com/users/iwahbe/repos\",\"events_url\":\"https://api.github.com/users/iwahbe/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/iwahbe/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false},\"labels\":[],\"state\":\"open\",\"locked\":false,\"assignees\":[],\"milestone\":null,\"comments\":0,\"created_at\":\"2026-04-11T00:01:10Z\",\"updated_at\":\"2026-04-11T00:01:28Z\",\"closed_at\":null,\"assignee\":null,\"author_association\":\"OWNER\",\"active_lock_reason\":null,\"sub_issues_summary\":{\"total\":0,\"completed\":0,\"percent_completed\":0},\"issue_dependencies_summary\":{\"blocked_by\":0,\"total_blocked_by\":0,\"blocking\":0,\"total_blocking\":0},\"body\":\"Updated body via REST\",\"closed_by\":null,\"reactions\":{\"url\":\"https://api.github.com/repos/iwahbe/taskpull/issues/5/reactions\",\"total_count\":0,\"+1\":0,\"-1\":0,\"laugh\":0,\"hooray\":0,\"confused\":0,\"heart\":0,\"rocket\":0,\"eyes\":0},\"timeline_url\":\"https://api.github.com/repos/iwahbe/taskpull/issues/5/timeline\",\"performed_via_github_app\":null,\"state_reason\":null,\"pinned_comment\":null}"
+    }
+  }
+]

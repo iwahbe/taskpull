@@ -1,0 +1,146 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "content-type": "application/json; charset=utf-8",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "graphql-features": "merge_queue",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-length": "697",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"\\n\\tquery PullRequestByNumber($owner: String!, $repo: String!, $pr_number: Int!) {\\n\\t\\trepository(owner: $owner, name: $repo) {\\n\\t\\t\\tpullRequest(number: $pr_number) {id,author{login,...on User{id,name}},url,title,body,baseRefName,reviewRequests(first: 100) {nodes {requestedReviewer {__typename,...on User{login,name},...on Bot{login},...on Team{organization{login}name,slug}}}},labels(first:100){nodes{id,name,description,color},totalCount},milestone{number,title,description,dueOn},assignedActors(first: 10) {nodes {...on User {id,login,name,__typename}...on Bot {id,login,__typename}},totalCount},number}\\n\\t\\t}\\n\\t}\",\"variables\":{\"owner\":\"iwahbe\",\"pr_number\":6,\"repo\":\"taskpull\"}}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:01:45 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4835",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "165",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "4F12:1F87B0:1A76DA9:174A918:69D98F69"
+      },
+      "body": "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_kwDORru3U87RmEUU\",\"author\":{\"login\":\"iwahbe\",\"id\":\"MDQ6VXNlcjIyMjIyNTI5\",\"name\":\"Ian Wahbe\"},\"url\":\"https://github.com/iwahbe/taskpull/pull/6\",\"title\":\"Edit test PR (updated)\",\"body\":\"Updated body via REST\",\"baseRefName\":\"main\",\"reviewRequests\":{\"nodes\":[]},\"labels\":{\"nodes\":[],\"totalCount\":0},\"milestone\":null,\"assignedActors\":{\"nodes\":[],\"totalCount\":0},\"number\":6}}}}"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "graphql-features": "merge_queue",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-length": "465",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"query PullRequestProjectItems($endCursor:String$name:String!$number:Int!$owner:String!){repository(owner: $owner, name: $name){pullRequest(number: $number){projectItems(first: 100, after: $endCursor){totalCount,nodes{id,project{id,title},status:fieldValueByName(name: \\\"Status\\\"){... on ProjectV2ItemFieldSingleSelectValue{optionId,name}}},pageInfo{hasNextPage,endCursor}}}}}\",\"variables\":{\"endCursor\":null,\"name\":\"taskpull\",\"number\":6,\"owner\":\"iwahbe\"}}\n"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:01:45 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4833",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "167",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "4F12:1F87B0:1A76F56:174AAC1:69D98F69"
+      },
+      "body": "{\"errors\":[{\"type\":\"INSUFFICIENT_SCOPES\",\"locations\":[{\"line\":1,\"column\":218}],\"message\":\"Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens.\"},{\"type\":\"INSUFFICIENT_SCOPES\",\"locations\":[{\"line\":1,\"column\":229}],\"message\":\"Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens.\"},{\"type\":\"INSUFFICIENT_SCOPES\",\"locations\":[{\"line\":1,\"column\":232}],\"message\":\"Your token has not been granted the required scopes to execute this query. The 'title' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens.\"},{\"type\":\"INSUFFICIENT_SCOPES\",\"locations\":[{\"line\":1,\"column\":322}],\"message\":\"Your token has not been granted the required scopes to execute this query. The 'optionId' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens.\"},{\"type\":\"INSUFFICIENT_SCOPES\",\"locations\":[{\"line\":1,\"column\":331}],\"message\":\"Your token has not been granted the required scopes to execute this query. The 'name' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo', 'workflow'] scopes. Please modify your token's scopes at: https://github.com/settings/tokens.\"}]}"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "graphql-features": "merge_queue",
+        "user-agent": "GitHub CLI 2.89.0",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "content-type": "application/json",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "content-length": "254",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"mutation PullRequestUpdate($input:UpdatePullRequestInput!){updatePullRequest(input: $input){__typename}}\",\"variables\":{\"input\":{\"pullRequestId\":\"PR_kwDORru3U87RmEUU\",\"title\":\"Edit test PR (graphql updated)\",\"body\":\"Updated body via GraphQL\"}}}\n"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:01:46 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4832",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "168",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "4F12:1F87B0:1A7705E:174ABC3:69D98F6A"
+      },
+      "body": "{\"data\":{\"updatePullRequest\":{\"__typename\":\"UpdatePullRequestPayload\"}}}"
+    }
+  }
+]
