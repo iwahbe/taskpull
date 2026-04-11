@@ -48,7 +48,7 @@ class TlsProvider(Protocol):
 
 @dataclass(frozen=True)
 class Permissions:
-    allowed_repo: str
+    allowed_repo: str  # "owner/repo" format
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,9 @@ class _SessionEntry(BaseModel):
     token: ProxyToken
     permissions: Permissions
     repo_node_cache: dict[str, str] = {}
+    branch: str | None = None
+    created_issue_ids: set[str] = set()
+    created_pr_ids: set[str] = set()
 
 
 class _ProxyState(BaseModel):
@@ -86,6 +89,81 @@ class GitHubProxy(ABC):
 
 
 class LiveGitHubProxy(GitHubProxy):
+    """Production GitHub proxy that enforces per-session permissions.
+
+    All requests are authenticated by a proxy token in the Authorization header.
+    The proxy maps each token to a session, then decides whether to forward the
+    request to GitHub (injecting the real token) or reject it.
+
+    ## Read requests
+
+    All read operations are forwarded unconditionally:
+    - GraphQL queries (any query, regardless of target repo)
+    - REST GET/HEAD requests
+    - Git upload-pack (clone/fetch)
+
+    GraphQL query responses are inspected to cache repository node IDs
+    (mapping node ID -> "owner/repo") for later mutation verification.
+
+    ## Write requests
+
+    Write operations are gated per-session. Each session is assigned a single
+    allowed_repo ("owner/repo"). The proxy enforces:
+
+    ### Git push (receive-pack)
+
+    - Only allowed to the session's assigned repo.
+    - The first push establishes the session's branch. The target ref must not
+      already exist on the remote (verified via the refs advertisement).
+    - Subsequent pushes must target the same branch.
+
+    ### GraphQL mutations
+
+    Allowed mutations and their constraints:
+
+    - createPullRequest: repositoryId must resolve to the allowed repo. The
+      PR's headRefName must match the session's established branch.
+    - createIssue: repositoryId must resolve to the allowed repo.
+    - updateIssue: the issue must have been created by this session (tracked
+      by node ID from the creation response).
+    - updatePullRequest: the PR must have been created by this session.
+    - closeIssue: the issue must have been created by this session.
+    - closePullRequest: the PR must have been created by this session.
+    - addLabelsToLabelable: the labelable must have been created by this session.
+    - removeLabelsFromLabelable: the labelable must have been created by this session.
+
+    All other mutations are rejected.
+
+    ### REST writes (POST/PUT/PATCH/DELETE)
+
+    - POST /repos/{owner}/{repo}/issues: allowed if repo matches.
+    - POST /repos/{owner}/{repo}/pulls: allowed if repo matches. The request
+      body's "head" field must match the session's branch.
+    - PATCH /repos/{owner}/{repo}/issues/{n}: allowed if the issue was created
+      by this session (tracked by issue number from REST creation responses).
+    - PATCH /repos/{owner}/{repo}/pulls/{n}: allowed if the PR was created by
+      this session.
+    - POST /repos/{owner}/{repo}/issues/{n}/labels: allowed if the issue was
+      created by this session.
+    - DELETE /repos/{owner}/{repo}/issues/{n}/labels/{name}: allowed if the
+      issue was created by this session.
+    - All other REST write paths are rejected.
+
+    ## Event emission
+
+    Successful responses (both GraphQL and REST) emit events:
+    - PRCreated when a pull request is created.
+    - IssueCreated when an issue is created.
+    - PRClosed when a pull request is closed.
+    - IssueClosed when an issue is closed.
+
+    ## Unknown node IDs
+
+    When a mutation references a repositoryId not in the cache, the proxy
+    resolves it by querying GitHub's node API before making the allow/deny
+    decision. Resolved mappings are persisted in the session's repo_node_cache.
+    """
+
     def __init__(
         self,
         gh_token: str,

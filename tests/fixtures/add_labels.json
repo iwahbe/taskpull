@@ -1,0 +1,146 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-type": "application/json; charset=utf-8",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "graphql-features": "merge_queue",
+        "content-length": "535",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"\\n\\tquery IssueByNumber($owner: String!, $repo: String!, $number: Int!) {\\n\\t\\trepository(owner: $owner, name: $repo) {\\n\\t\\t\\thasIssuesEnabled\\n\\t\\t\\tissue: issueOrPullRequest(number: $number) {\\n\\t\\t\\t\\t__typename\\n\\t\\t\\t\\t...on Issue{id,number,title,body,url,labels(first:100){nodes{id,name,description,color},totalCount}}\\n\\t\\t\\t\\t...on PullRequest{id,number,title,body,url,labels(first:100){nodes{id,name,description,color},totalCount}}\\n\\t\\t\\t}\\n\\t\\t}\\n\\t}\",\"variables\":{\"number\":10,\"owner\":\"iwahbe\",\"repo\":\"taskpull\"}}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:15:42 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4710",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "290",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "503A:30F8D9:1B26703:17EF215:69D992AD"
+      },
+      "body": "{\"data\":{\"repository\":{\"hasIssuesEnabled\":true,\"issue\":{\"__typename\":\"Issue\",\"id\":\"I_kwDORru3U8783GEO\",\"number\":10,\"title\":\"Label test issue\",\"body\":\"Test issue for label capture.\",\"url\":\"https://github.com/iwahbe/taskpull/issues/10\",\"labels\":{\"nodes\":[],\"totalCount\":0}}}}}"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "graphql-features": "merge_queue",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-length": "317",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"query RepositoryLabelList($endCursor:String$name:String!$owner:String!){repository(owner: $owner, name: $name){labels(first: 100, orderBy: {field: NAME, direction: ASC}, after: $endCursor){nodes{id,name},pageInfo{hasNextPage,endCursor}}}}\",\"variables\":{\"endCursor\":null,\"name\":\"taskpull\",\"owner\":\"iwahbe\"}}\n"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:15:42 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4709",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "291",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "503A:30F8D9:1B26811:17EF322:69D992AE"
+      },
+      "body": "{\"data\":{\"repository\":{\"labels\":{\"nodes\":[{\"id\":\"LA_kwDORru3U88AAAACcDusPQ\",\"name\":\"bug\"},{\"id\":\"LA_kwDORru3U88AAAACcDusSQ\",\"name\":\"documentation\"},{\"id\":\"LA_kwDORru3U88AAAACcDusTg\",\"name\":\"duplicate\"},{\"id\":\"LA_kwDORru3U88AAAACcDusVg\",\"name\":\"enhancement\"},{\"id\":\"LA_kwDORru3U88AAAACcDusYg\",\"name\":\"good first issue\"},{\"id\":\"LA_kwDORru3U88AAAACcDusXQ\",\"name\":\"help wanted\"},{\"id\":\"LA_kwDORru3U88AAAACcDusaQ\",\"name\":\"invalid\"},{\"id\":\"LA_kwDORru3U88AAAACcDusbQ\",\"name\":\"question\"},{\"id\":\"LA_kwDORru3U88AAAACcDuscw\",\"name\":\"wontfix\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"OQ\"}}}}}"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/graphql",
+      "path": "/graphql",
+      "headers": {
+        "graphql-features": "merge_queue",
+        "user-agent": "GitHub CLI 2.89.0",
+        "time-zone": "Etc/UTC",
+        "accept": "application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview",
+        "content-type": "application/json",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "content-length": "242",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"query\":\"mutation LabelAdd($input:AddLabelsToLabelableInput!){addLabelsToLabelable(input: $input){__typename}}\",\"variables\":{\"input\":{\"labelableId\":\"I_kwDORru3U8783GEO\",\"labelIds\":[\"LA_kwDORru3U88AAAACcDusPQ\",\"LA_kwDORru3U88AAAACcDusVg\"]}}}\n"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sat, 11 Apr 2026 00:15:43 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "repo",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v4; param=merge-info-preview.nebula-preview; format=json",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4708",
+        "x-ratelimit-reset": "1775868055",
+        "x-ratelimit-used": "292",
+        "x-ratelimit-resource": "graphql",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "vary": "Accept-Encoding, Accept, X-Requested-With",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "503A:30F8D9:1B269DC:17EF4DD:69D992AE"
+      },
+      "body": "{\"data\":{\"addLabelsToLabelable\":{\"__typename\":\"AddLabelsToLabelablePayload\"}}}"
+    }
+  }
+]
