@@ -20,10 +20,10 @@
         "content-type": "text/plain; charset=UTF-8",
         "www-authenticate": "Basic realm=\"GitHub\"",
         "content-length": "26",
-        "date": "Fri, 10 Apr 2026 21:21:32 GMT",
+        "date": "Sat, 11 Apr 2026 00:40:39 GMT",
         "x-frame-options": "DENY",
         "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
-        "x-github-request-id": "4FF3:FF064:1CAD839:145A814:69D969DC"
+        "x-github-request-id": "4F52:3806AE:36577E8:28B991F:69D99887"
       },
       "body": "No anonymous write access."
     }
@@ -52,12 +52,12 @@
         "pragma": "no-cache",
         "cache-control": "no-cache, max-age=0, must-revalidate",
         "vary": "Accept-Encoding",
-        "date": "Fri, 10 Apr 2026 21:21:32 GMT",
+        "date": "Sat, 11 Apr 2026 00:40:39 GMT",
         "x-frame-options": "DENY",
         "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
-        "x-github-request-id": "4FF3:FF064:1CAD9AF:145A8FF:69D969DC"
+        "x-github-request-id": "4F52:3806AE:3657988:28B9A7A:69D99887"
       },
-      "body": "001f# service=git-receive-pack\n0000012617e9f1dc601f600f3d663336f8857931241f74ee refs/heads/main\u0000report-status report-status-v2 delete-refs side-band-64k ofs-delta atomic object-format=sha1 quiet agent=github/spokes-receive-pack-acac8763c60f636c44baaf5c3887895cf5f55c30 session-id=4FF3:FF064:1CAD9AF:145A8FF:69D969DC push-options\n003e9e46c4b8846cd3cde1a5218e84c504d4ac5203b1 refs/tags/v0.1.0\n0000"
+      "body": "001f# service=git-receive-pack\n00000131fde0b6b0ed3cd4bd4fbdf8ddf0933f8bfcae5da6 refs/heads/iwahbe/tighten\u0000report-status report-status-v2 delete-refs side-band-64k ofs-delta atomic object-format=sha1 quiet agent=github/spokes-receive-pack-acac8763c60f636c44baaf5c3887895cf5f55c30 session-id=4F52:3806AE:3657988:28B9A7A:69D99887 push-options\n003d17e9f1dc601f600f3d663336f8857931241f74ee refs/heads/main\n004caa96a6cf723475ff07e8c11d6e27ed22409851fc refs/heads/test/recapture-push\n003e9e46c4b8846cd3cde1a5218e84c504d4ac5203b1 refs/tags/v0.1.0\n0000"
     }
   },
   {
@@ -71,9 +71,11 @@
         "accept-encoding": "deflate, gzip, br, zstd",
         "content-type": "application/x-git-receive-pack-request",
         "accept": "application/x-git-receive-pack-result",
-        "content-length": "64100"
+        "content-length": "228"
       },
-      "body": "REMOVED FOR SIZE"
+      "body": {
+        "base64": "MDBjMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAgYWE5NmE2Y2Y3MjM0NzVmZjA3ZThjMTFkNmUyN2VkMjI0MDk4NTFmYyByZWZzL2hlYWRzL3Rlc3QvcmVjYXB0dXJlLXB1c2gtMgAgcmVwb3J0LXN0YXR1cy12MiBzaWRlLWJhbmQtNjRrIHF1aWV0IG9iamVjdC1mb3JtYXQ9c2hhMSBhZ2VudD1naXQvMi4zOS41MDAwMFBBQ0sAAAACAAAAAAKdCII72KjqtRCtasdcgjz9PtMe"
+      }
     },
     "response": {
       "status_code": 200,
@@ -85,12 +87,12 @@
         "pragma": "no-cache",
         "cache-control": "no-cache, max-age=0, must-revalidate",
         "vary": "Accept-Encoding",
-        "date": "Fri, 10 Apr 2026 21:21:33 GMT",
+        "date": "Sat, 11 Apr 2026 00:40:39 GMT",
         "x-frame-options": "DENY",
         "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
-        "x-github-request-id": "4FF3:FF064:1CADDDA:145ABE4:69D969DC"
+        "x-github-request-id": "4F52:3806AE:3657BAA:28B9C43:69D99887"
       },
-      "body": "0006\u0002\u00000013\u0001000eunpack ok\n002d\u00010028ok refs/heads/test/capture-git-push\n0097\u0002\nCreate a pull request for 'test/capture-git-push' on GitHub by visiting:\n     https://github.com/iwahbe/taskpull/pull/new/test/capture-git-push\n\n0009\u000100000000"
+      "body": "0006\u0002\u00000013\u0001000eunpack ok\n002d\u00010028ok refs/heads/test/recapture-push-2\n0097\u0002\nCreate a pull request for 'test/recapture-push-2' on GitHub by visiting:\n     https://github.com/iwahbe/taskpull/pull/new/test/recapture-push-2\n\n0009\u000100000000"
     }
   }
 ]

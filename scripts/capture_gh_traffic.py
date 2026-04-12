@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import shlex
@@ -180,6 +181,14 @@ async def _build_image(image_name: str) -> None:
             sys.exit(f"docker build failed (rc={proc.returncode}):\n{stdout.decode()}")
 
 
+def _encode_body(raw: bytes) -> str | dict[str, str]:
+    """Return the body as a string if it's valid UTF-8, otherwise base64-encode it."""
+    try:
+        return raw.decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return {"base64": base64.b64encode(raw).decode("ascii")}
+
+
 class FlowCollector:
     def __init__(self) -> None:
         self.flows: list[dict] = []
@@ -193,12 +202,12 @@ class FlowCollector:
                     "url": flow.request.pretty_url,
                     "path": flow.request.path,
                     "headers": _scrub_headers(dict(flow.request.headers)),
-                    "body": flow.request.get_text(strict=False),
+                    "body": _encode_body(flow.request.raw_content or b""),
                 },
                 "response": {
                     "status_code": flow.response.status_code,
                     "headers": _scrub_headers(dict(flow.response.headers)),
-                    "body": flow.response.get_text(strict=False),
+                    "body": _encode_body(flow.response.raw_content or b""),
                 },
             }
         )
