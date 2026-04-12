@@ -16,6 +16,8 @@ from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 from starlette.requests import Request
 from starlette.responses import Response
+from graphql import parse as gql_parse
+from graphql.language.ast import OperationDefinitionNode, OperationType
 
 from taskpull.engine_events import (
     EngineEvent,
@@ -389,7 +391,25 @@ class LiveGitHubProxy(GitHubProxy):
     async def _handle_graphql(
         self, request: Request, session_id: SessionID, overwrite: dict[str, str]
     ) -> Response:
-        raise NotImplementedError
+        for defn in gql_parse(bytes(await request.body()).decode()).definitions:
+            if not isinstance(defn, OperationDefinitionNode):
+                return self._reject(f"Invalid GraphQL query: {type(defn)}")
+            match defn.operation:
+                case OperationType.QUERY | OperationType.SUBSCRIPTION:
+                    continue
+                case OperationType.MUTATION:
+                    if self._graphql_mutation_is_ok(session_id, defn):
+                        continue
+                    return self._reject(f"Forbidden GraphQL query: {type(defn)}")
+
+            raise NotImplementedError(f"{defn.operation} not handled")
+
+        return await self._forward(request, overwrite)
+
+    def _graphql_mutation_is_ok(
+        self, session_id: SessionID, defn: OperationDefinitionNode
+    ) -> bool:
+        return False
 
     def _reject(self, reason: str) -> Response:
         return Response(
