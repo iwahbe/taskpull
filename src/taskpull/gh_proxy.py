@@ -516,7 +516,7 @@ class GHProxy:
         if clean == "/graphql" and method == "POST":
             try:
                 data = json.loads(body)
-            except (json.JSONDecodeError, UnicodeDecodeError):
+            except json.JSONDecodeError, UnicodeDecodeError:
                 return False, "Cannot parse GraphQL body", False
             query = data.get("query", "") if isinstance(data, dict) else ""
 
@@ -606,7 +606,7 @@ class GHProxy:
             data = json.loads(body)
             pr_number = data["number"]
             pr_url = data["html_url"]
-        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+        except json.JSONDecodeError, KeyError, UnicodeDecodeError:
             log.warning("GH proxy: failed to parse PR creation response")
             return
         log.info("GH proxy: detected PR #%d for task %s", pr_number, task_id)
@@ -633,7 +633,7 @@ class GHProxy:
             data = json.loads(body)
             issue_number = data["number"]
             issue_url = data["html_url"]
-        except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+        except json.JSONDecodeError, KeyError, UnicodeDecodeError:
             log.warning("GH proxy: failed to parse issue creation response")
             return
         log.info("GH proxy: detected issue #%d for task %s", issue_number, task_id)
@@ -661,7 +661,7 @@ class GHProxy:
             mutation_fields = self._extract_graphql_mutation_fields(query)
             if mutation_fields is None or "createPullRequest" not in mutation_fields:
                 return
-        except (json.JSONDecodeError, GraphQLSyntaxError, UnicodeDecodeError):
+        except json.JSONDecodeError, GraphQLSyntaxError, UnicodeDecodeError:
             return
 
         task_id = self._task_map.get(proxy_token)
@@ -673,7 +673,7 @@ class GHProxy:
             pr_data = resp_data["data"]["createPullRequest"]["pullRequest"]
             pr_number = pr_data["number"]
             pr_url = pr_data["url"]
-        except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError):
+        except json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError:
             log.warning("GH proxy: failed to parse GraphQL PR creation response")
             return
 
@@ -702,7 +702,7 @@ class GHProxy:
             mutation_fields = self._extract_graphql_mutation_fields(query)
             if mutation_fields is None or "createIssue" not in mutation_fields:
                 return
-        except (json.JSONDecodeError, GraphQLSyntaxError, UnicodeDecodeError):
+        except json.JSONDecodeError, GraphQLSyntaxError, UnicodeDecodeError:
             return
 
         task_id = self._task_map.get(proxy_token)
@@ -714,7 +714,7 @@ class GHProxy:
             issue_data = resp_data["data"]["createIssue"]["issue"]
             issue_number = issue_data["number"]
             issue_url = issue_data["url"]
-        except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError):
+        except json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError:
             log.warning("GH proxy: failed to parse GraphQL issue creation response")
             return
 
@@ -763,7 +763,7 @@ class GHProxy:
             data = json.loads(body)
             node = data["data"]["node"]
             owner_repo = f"{node['owner']['login']}/{node['name']}"
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except json.JSONDecodeError, KeyError, TypeError:
             log.warning("Could not parse node resolution for %s: %s", node_id, body)
             return None
         cache = self._repo_node_cache.setdefault(proxy_token, {})
@@ -774,7 +774,7 @@ class GHProxy:
     def _cache_repo_node_ids(self, proxy_token: str, response_body: bytes) -> None:
         try:
             data = json.loads(response_body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except json.JSONDecodeError, UnicodeDecodeError:
             return
         if isinstance(data, dict):
             self._walk_for_repo_nodes(proxy_token, data)

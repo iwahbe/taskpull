@@ -36,7 +36,7 @@ def _tmux_session_exists() -> bool:
 def _fetch_tasks(ipc_port: int) -> dict[str, dict[str, Any]]:
     try:
         response = send_command("127.0.0.1", ipc_port, "list")
-    except (ConnectionRefusedError, OSError):
+    except ConnectionRefusedError, OSError:
         return {}
     return response.get("tasks", {})
 
@@ -146,7 +146,7 @@ def launch_tui(config: Config) -> None:
         try:
             os.kill(child_pid, signal.SIGTERM)
             os.waitpid(child_pid, 0)
-        except (ProcessLookupError, ChildProcessError):
+        except ProcessLookupError, ChildProcessError:
             pass
         _kill_session()
 
@@ -487,7 +487,7 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
                 if info.get("status") == "paused":
                     try:
                         send_command("127.0.0.1", ipc_port, "resume", task_id=tid)
-                    except (ConnectionRefusedError, OSError):
+                    except ConnectionRefusedError, OSError:
                         pass
                     prev_selected = -1
 
@@ -497,7 +497,7 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
                 if info.get("status") != "paused":
                     try:
                         send_command("127.0.0.1", ipc_port, "pause", task_id=tid)
-                    except (ConnectionRefusedError, OSError):
+                    except ConnectionRefusedError, OSError:
                         pass
                     prev_selected = -1
 
@@ -506,7 +506,7 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
                 tid, _info = task_list[selected]
                 try:
                     send_command("127.0.0.1", ipc_port, "restart", task_id=tid)
-                except (ConnectionRefusedError, OSError):
+                except ConnectionRefusedError, OSError:
                     pass
                 prev_selected = -1
 
@@ -516,6 +516,6 @@ def _sidebar_loop(stdscr: curses.window, ipc_port: int) -> None:
                 if info.get("adhoc") is not None:
                     try:
                         send_command("127.0.0.1", ipc_port, "delete_task", task_id=tid)
-                    except (ConnectionRefusedError, OSError):
+                    except ConnectionRefusedError, OSError:
                         pass
                     prev_selected = -1

@@ -185,7 +185,7 @@ def _encode_body(raw: bytes) -> str | dict[str, str]:
     """Return the body as a string if it's valid UTF-8, otherwise base64-encode it."""
     try:
         return raw.decode("utf-8")
-    except (UnicodeDecodeError, ValueError):
+    except UnicodeDecodeError, ValueError:
         return {"base64": base64.b64encode(raw).decode("ascii")}
 
 
@@ -349,7 +349,7 @@ async def main() -> None:
             master.shutdown()
             try:
                 await asyncio.wait_for(proxy_task, timeout=5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except asyncio.TimeoutError, asyncio.CancelledError:
                 proxy_task.cancel()
 
             # Cleanup container if still running.

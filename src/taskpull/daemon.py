@@ -13,7 +13,7 @@ from .ipc import send_command
 def read_pid_file(pid_file: Path) -> int | None:
     try:
         return int(pid_file.read_text().strip())
-    except (FileNotFoundError, ValueError):
+    except FileNotFoundError, ValueError:
         return None
 
 
@@ -99,7 +99,7 @@ def stop_daemon(config: Config) -> None:
     # (the PID could have been reused by an unrelated process).
     try:
         send_command("127.0.0.1", config.ipc_port, "ping")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         remove_pid(config)
         print(f"removed stale PID file (PID {pid} is not the taskpull daemon)")
         sys.exit(1)

@@ -60,7 +60,7 @@ async def _hook_notify(request: Request) -> Response:
 
     try:
         body = await request.json()
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return JSONResponse(
             {"status": "error", "message": "invalid JSON"}, status_code=400
         )

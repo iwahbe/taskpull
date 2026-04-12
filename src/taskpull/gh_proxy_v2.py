@@ -1,10 +1,13 @@
 from __future__ import annotations
+import base64
 
 import asyncio
 import secrets
+import logging
 import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from collections.abc import Coroutine, Callable
 from typing import Protocol
 
 from pydantic import BaseModel, GetCoreSchemaHandler
@@ -14,6 +17,8 @@ from starlette.responses import Response
 
 from taskpull.engine_events import EngineEvent, SessionID
 from taskpull.state_manager import StateFactory, StateManager
+
+log = logging.getLogger(__name__)
 
 
 class ProxyToken(str):
@@ -61,8 +66,8 @@ class _SessionEntry(BaseModel):
     permissions: Permissions
     repo_node_cache: dict[str, str] = {}
     branch: str | None = None
-    created_issue_ids: set[str] = set()
-    created_pr_ids: set[str] = set()
+    created_issue_ids: set[int] = set()
+    created_pr_ids: set[int] = set()
 
 
 class _ProxyState(BaseModel):
@@ -213,4 +218,125 @@ class LiveGitHubProxy(GitHubProxy):
 
     async def handle(self, request: Request) -> Response:
         await self._ensure_loaded()
+
+        auth = self._get_auth(request)
+        if not auth:
+            log.info(f"passing unauthenticated request through to {request.url}")
+            return await self._forward(request)  # Forward with existing auth
+
+        session_id, auth_header = auth
+        overwrite_headers = {"authorization": auth_header}
+        session = self._sessions[session_id]
+
+        # Read only methods are safe
+        if request.method in ("GET", "HEAD"):
+            return await self._forward(request, overwrite_headers)
+
+        if request.method == "POST":
+            match request.url.path.split("/"):
+                case ["graphql"]:
+                    return await self._handle_graphql(
+                        request, session_id, overwrite_headers
+                    )
+                case ["repos", org, repo, "pulls"]:
+                    if session.permissions.allowed_repo != f"{org}/{repo}":
+                        return self._reject(
+                            f"Can only open Pull Requests in {org}/{repo}"
+                        )
+                    body = await request.json()
+                    if (
+                        session.branch is None
+                        or body["head"] != self._sessions[session_id].branch
+                    ):
+                        return self._reject(
+                            "Can only open Pull Requests from branches you have created"
+                        )
+                    return await self._forward(
+                        request,
+                        overwrite_headers,
+                        on_success=self._capture_rest_pr_created,
+                    )
+                case ["repos", org, repo, "issues"]:
+                    if session.permissions.allowed_repo != f"{org}/{repo}":
+                        return self._reject(f"Can only open Issues in {org}/{repo}")
+                    return await self._forward(
+                        request,
+                        overwrite_headers,
+                        on_success=self._capture_rest_issue_created,
+                    )
+                case ["repos", org, repo, "issues", number, "labels"]:
+                    if session.permissions.allowed_repo != f"{org}/{repo}":
+                        return self._reject(f"Can only edit Issues in {org}/{repo}")
+                    if int(number) not in session.created_issue_ids:
+                        return self._reject("Can only edit Issues you created")
+                    return await self._forward(request, overwrite_headers)
+
+        if request.method == "PATCH":
+            raise NotImplementedError
+
+        return self._reject(
+            f"{request.method} {request.url} rejected by taskpull proxy"
+        )
+
+    async def _forward(
+        self,
+        request: Request,
+        overwrite: dict[str, str] = {},
+        on_success: Callable[[Request], Coroutine] | None = None,
+    ) -> Response:
         raise NotImplementedError
+
+    async def _capture_rest_pr_created(self, request: Request):
+        raise NotImplementedError
+
+    async def _capture_rest_issue_created(self, request: Request):
+        raise NotImplementedError
+
+    async def _handle_graphql(
+        self, request: Request, session_id: SessionID, overwrite: dict[str, str]
+    ) -> Response:
+        raise NotImplementedError
+
+    def _reject(self, reason: str) -> Response:
+        raise NotImplementedError
+
+    def _get_auth(self, request: Request) -> tuple[SessionID, str] | None:
+        auth = request.headers.get("authorization")
+        if not auth:
+            return  # Forward without auth
+
+        if (base64_token := auth.removeprefix("Basic ")) != auth:
+            [username, token] = (
+                base64.b64decode(base64_token, validate=True)
+                .decode()
+                .split(":", maxsplit=1)
+            )
+            try:
+                [session_id, _] = next(
+                    filter(
+                        lambda entry: entry[1].proxy_token == token,
+                        self._sessions.items(),
+                    )
+                )
+                return session_id, "Basic " + str(
+                    base64.b64encode(f"{username}:{self._gh_token}".encode())
+                )
+            except StopIteration:
+                # No matching session, so pass through
+                return
+
+        for prefix in ["Bearer ", "token "]:
+            if (token := auth.removeprefix(prefix)) != auth:
+                try:
+                    [session_id, _] = next(
+                        filter(
+                            lambda entry: entry[1].proxy_token == token,
+                            self._sessions.items(),
+                        )
+                    )
+                    return session_id, prefix + self._gh_token
+                except StopIteration:
+                    # No matching session, so pass through
+                    return
+
+        return
