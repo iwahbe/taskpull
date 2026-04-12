@@ -1176,6 +1176,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "graphql-core" },
+    { name = "httpx" },
     { name = "keyring" },
     { name = "mcp" },
     { name = "pydantic" },
@@ -1194,6 +1195,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "graphql-core", specifier = ">=3.2" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "keyring", specifier = ">=25.0" },
     { name = "mcp", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.12" },

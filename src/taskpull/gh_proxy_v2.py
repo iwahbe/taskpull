@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import json
 
 import asyncio
 import secrets
@@ -10,12 +11,13 @@ from dataclasses import dataclass
 from collections.abc import Coroutine, Callable
 from typing import Protocol
 
+import httpx
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 from starlette.requests import Request
 from starlette.responses import Response
 
-from taskpull.engine_events import EngineEvent, SessionID
+from taskpull.engine_events import EngineEvent, SessionID, PRCreated, IssueCreated
 from taskpull.state_manager import StateFactory, StateManager
 
 log = logging.getLogger(__name__)
@@ -29,19 +31,6 @@ class ProxyToken(str):
         return core_schema.no_info_plain_validator_function(
             cls, serialization=core_schema.to_string_ser_schema()
         )
-
-
-class HttpClient(Protocol):
-    """Async HTTP client for making upstream requests."""
-
-    async def request(
-        self,
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        content: bytes,
-        ssl_context: ssl.SSLContext | None,
-    ) -> Response: ...
 
 
 class TlsProvider(Protocol):
@@ -66,8 +55,22 @@ class _SessionEntry(BaseModel):
     permissions: Permissions
     repo_node_cache: dict[str, str] = {}
     branch: str | None = None
-    created_issue_ids: set[int] = set()
-    created_pr_ids: set[int] = set()
+
+    created_issue_ids: dict[str, int] = {}  # Map from PR URL or Node ID to PR number
+    created_pr_ids: dict[str, int] = {}  # Map from Issue URL or Node ID to Issue number
+
+    def _add_entry(self, url: str, node_id: str, m: dict[str, int], kind: str):
+        match url.removeprefix("https://").split("/"):
+            case [_host, "repos", _org, _repo, key, number] if key == kind:
+                m[url] = number
+                m[node_id] = number
+        raise ValueError(f"invalid url {url} for {kind}")
+
+    def add_pr(self, url: str, node_id: str):
+        self._add_entry(url, node_id, self.created_pr_ids, "pulls")
+
+    def add_issue(self, url: str, node_id: str):
+        self._add_entry(url, node_id, self.created_issue_ids, "issues")
 
 
 class _ProxyState(BaseModel):
@@ -172,7 +175,7 @@ class LiveGitHubProxy(GitHubProxy):
     def __init__(
         self,
         gh_token: str,
-        http_client: HttpClient,
+        http_client: httpx.AsyncClient,
         tls: TlsProvider,
         state_factory: StateFactory,
         queue: asyncio.Queue[EngineEvent],
@@ -254,7 +257,9 @@ class LiveGitHubProxy(GitHubProxy):
                     return await self._forward(
                         request,
                         overwrite_headers,
-                        on_success=self._capture_rest_pr_created,
+                        on_success=lambda req, resp: self._capture_rest_pr_created(
+                            session_id, session, req, resp
+                        ),
                     )
                 case ["repos", org, repo, "issues"]:
                     if session.permissions.allowed_repo != f"{org}/{repo}":
@@ -262,17 +267,56 @@ class LiveGitHubProxy(GitHubProxy):
                     return await self._forward(
                         request,
                         overwrite_headers,
-                        on_success=self._capture_rest_issue_created,
+                        on_success=lambda req, resp: self._capture_rest_issue_created(
+                            session_id, session, req, resp
+                        ),
                     )
                 case ["repos", org, repo, "issues", number, "labels"]:
                     if session.permissions.allowed_repo != f"{org}/{repo}":
                         return self._reject(f"Can only edit Issues in {org}/{repo}")
-                    if int(number) not in session.created_issue_ids:
+                    if (
+                        int(number) not in session.created_issue_ids
+                        and int(number) not in session.created_pr_ids
+                    ):
                         return self._reject("Can only edit Issues you created")
                     return await self._forward(request, overwrite_headers)
 
         if request.method == "PATCH":
-            raise NotImplementedError
+            match request.url.path.split("/"):
+                case ["repos", org, repo, "issues", number]:
+                    if session.permissions.allowed_repo != f"{org}/{repo}":
+                        return self._reject(f"Can only edit Issues in {org}/{repo}")
+                    if int(number) not in session.created_issue_ids:
+                        return self._reject("Can only edit Issues you created")
+                    return await self._forward(
+                        request,
+                        overwrite_headers,
+                        on_success=self._capture_rest_issue_edited,
+                    )
+                case ["repos", org, repo, "pulls", number]:
+                    if session.permissions.allowed_repo != f"{org}/{repo}":
+                        return self._reject(
+                            f"Can only edit Pull Requests in {org}/{repo}"
+                        )
+                    if int(number) not in session.created_pr_ids:
+                        return self._reject("Can only edit Pull Requests you created")
+                    return await self._forward(
+                        request,
+                        overwrite_headers,
+                        on_success=self._capture_rest_pr_edited,
+                    )
+
+        if request.method == "DELETE":
+            match request.url.path.split("/"):
+                case ["repos", org, repo, "issues", number, "labels", _name]:
+                    if session.permissions.allowed_repo != f"{org}/{repo}":
+                        return self._reject(f"Can only edit Issues in {org}/{repo}")
+                    if (
+                        int(number) not in session.created_issue_ids
+                        and int(number) not in session.created_pr_ids
+                    ):
+                        return self._reject("Can only edit Issues you created")
+                    return await self._forward(request, overwrite_headers)
 
         return self._reject(
             f"{request.method} {request.url} rejected by taskpull proxy"
@@ -282,14 +326,56 @@ class LiveGitHubProxy(GitHubProxy):
         self,
         request: Request,
         overwrite: dict[str, str] = {},
-        on_success: Callable[[Request], Coroutine] | None = None,
+        on_success: Callable[[Request, Response], Coroutine] | None = None,
     ) -> Response:
+        headers = dict(request.headers)
+        headers.pop("host", None)
+        headers.update(overwrite)
+
+        upstream = await self._http_client.request(
+            method=request.method,
+            url=str(request.url),
+            headers=headers,
+            content=await request.body(),
+        )
+
+        response = Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            headers=dict(upstream.headers),
+        )
+
+        if on_success is not None and 200 <= upstream.status_code < 300:
+            await on_success(request, response)
+
+        return response
+
+    async def _capture_rest_pr_created(
+        self,
+        session_id: SessionID,
+        session: _SessionEntry,
+        _request: Request,
+        response: Response,
+    ):
+        body = json.loads(bytes(response.body))
+        session.add_pr(body["url"], body["node_id"])
+        await self._queue.put(PRCreated(session_id, body["url"]))
+
+    async def _capture_rest_issue_created(
+        self,
+        session_id: SessionID,
+        session: _SessionEntry,
+        _request: Request,
+        response: Response,
+    ):
+        body = json.loads(bytes(response.body))
+        session.add_issue(body["url"], body["node_id"])
+        await self._queue.put(IssueCreated(session_id, body["url"]))
+
+    async def _capture_rest_issue_edited(self, request: Request, response: Response):
         raise NotImplementedError
 
-    async def _capture_rest_pr_created(self, request: Request):
-        raise NotImplementedError
-
-    async def _capture_rest_issue_created(self, request: Request):
+    async def _capture_rest_pr_edited(self, request: Request, response: Response):
         raise NotImplementedError
 
     async def _handle_graphql(
@@ -298,7 +384,11 @@ class LiveGitHubProxy(GitHubProxy):
         raise NotImplementedError
 
     def _reject(self, reason: str) -> Response:
-        raise NotImplementedError
+        return Response(
+            content=json.dumps({"message": reason}),
+            status_code=403,
+            media_type="application/json",
+        )
 
     def _get_auth(self, request: Request) -> tuple[SessionID, str] | None:
         auth = request.headers.get("authorization")

@@ -1,0 +1,102 @@
+[
+  {
+    "request": {
+      "method": "DELETE",
+      "url": "https://api.github.com/repos/iwahbe/taskpull/issues/11/labels/bug",
+      "path": "/repos/iwahbe/taskpull/issues/11/labels/bug",
+      "headers": {
+        "accept": "*/*",
+        "authorization": "REDACTED",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "GitHub CLI 2.89.0",
+        "content-type": "application/json; charset=utf-8",
+        "time-zone": "Etc/UTC",
+        "accept-encoding": "gzip"
+      },
+      "body": ""
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sun, 12 Apr 2026 13:01:33 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, max-age=60, s-maxage=60",
+        "vary": "Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With",
+        "etag": "W/\"68ed69b0e974d13a42026a9111f8244ea2839017b9de2d171c59d98282ed94cd\"",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v3; format=json",
+        "x-github-api-version-selected": "2022-11-28",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4998",
+        "x-ratelimit-reset": "1776002485",
+        "x-ratelimit-used": "2",
+        "x-ratelimit-resource": "core",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "5164:2475CA:27EC1E5:21B7CC8:69DB97AC"
+      },
+      "body": {
+        "base64": "H4sIAAAAAAAAA1WMy07DMBBFfyXyuqoh5RGyq9olAgkJNghVE+emserYZjyjLBD/jrvk7u7R0fn8MX40/e3N3WPbPe3u24eNiWnE6UrN8/50WY+vb6y7967b1x3cUcvH2WyMcqjGLJJLby1lvz17mXXYurRYRk7F+pXmAVaoXLKGYAMNCMUizhQdFkSpnUgLaug/dCkkrpRaAFO1RkykQUwvrLje4thn8SlW6wVrM4FEGU3ihvGtKGJ+v/4AozrdHd4AAAA="
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "DELETE",
+      "url": "https://api.github.com/repos/iwahbe/taskpull/issues/11/labels/enhancement",
+      "path": "/repos/iwahbe/taskpull/issues/11/labels/enhancement",
+      "headers": {
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "GitHub CLI 2.89.0",
+        "accept": "*/*",
+        "authorization": "REDACTED",
+        "content-type": "application/json; charset=utf-8",
+        "time-zone": "Etc/UTC",
+        "accept-encoding": "gzip"
+      },
+      "body": ""
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sun, 12 Apr 2026 13:01:34 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "2",
+        "cache-control": "private, max-age=60, s-maxage=60",
+        "vary": "Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With",
+        "etag": "\"c4ad766fe7b0b6af17943e65240f984c0e73e65608350ec1dc160cd28a6d71ab\"",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v3; format=json",
+        "x-github-api-version-selected": "2022-11-28",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4997",
+        "x-ratelimit-reset": "1776002485",
+        "x-ratelimit-used": "3",
+        "x-ratelimit-resource": "core",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "server": "github.com",
+        "x-github-request-id": "516B:3D65F2:27E1AF5:2199935:69DB97AD"
+      },
+      "body": "[]"
+    }
+  }
+]

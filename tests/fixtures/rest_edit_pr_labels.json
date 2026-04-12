@@ -1,0 +1,54 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.github.com/repos/iwahbe/taskpull/issues/11/labels",
+      "path": "/repos/iwahbe/taskpull/issues/11/labels",
+      "headers": {
+        "accept": "*/*",
+        "authorization": "REDACTED",
+        "user-agent": "GitHub CLI 2.89.0",
+        "time-zone": "Etc/UTC",
+        "x-github-api-version": "2022-11-28",
+        "content-type": "application/json; charset=utf-8",
+        "content-length": "32",
+        "accept-encoding": "gzip"
+      },
+      "body": "{\"labels\":[\"bug\",\"enhancement\"]}"
+    },
+    "response": {
+      "status_code": 200,
+      "headers": {
+        "date": "Sun, 12 Apr 2026 13:01:25 GMT",
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "private, max-age=60, s-maxage=60",
+        "vary": "Accept, Authorization, Cookie, X-GitHub-OTP,Accept-Encoding, Accept, X-Requested-With",
+        "etag": "W/\"c0028a5e54e74d7dcb16e6e894473eafbeb9fe0c33c72f23bf7b397793c66fee\"",
+        "x-oauth-scopes": "REDACTED",
+        "x-accepted-oauth-scopes": "",
+        "x-oauth-client-id": "REDACTED",
+        "x-github-media-type": "github.v3; format=json",
+        "x-github-api-version-selected": "2022-11-28",
+        "x-ratelimit-limit": "5000",
+        "x-ratelimit-remaining": "4999",
+        "x-ratelimit-reset": "1776002485",
+        "x-ratelimit-used": "1",
+        "x-ratelimit-resource": "core",
+        "access-control-expose-headers": "ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubdomains; preload",
+        "x-frame-options": "deny",
+        "x-content-type-options": "nosniff",
+        "x-xss-protection": "0",
+        "referrer-policy": "origin-when-cross-origin, strict-origin-when-cross-origin",
+        "content-security-policy": "default-src 'none'",
+        "content-encoding": "gzip",
+        "server": "github.com",
+        "x-github-request-id": "5145:51DC8:2847941:21F9898:69DB97A5"
+      },
+      "body": {
+        "base64": "H4sIAAAAAAAAA52PTU/DMAyG/0qVC5dq2drBSm8TO6KND8EFoclN3SZqmoTEUQ9o/51UCCG4MOHbY7+2/Ly8M9WyerVcb4rqurxcrnJmbIvHuctut8dh2h0efCyfqmqb6kbsYri7ZzmLXqeEJHKh5hycWvSKZGwWwo7co7OBqwlkg5wgDC5qzTU0qANvYp/2DYyYDnyCsNr6RO2mhDWkaYsdRE2sJh9xxiC8cqSsSalHOyJJZfpMBXNB2WT9kIid8l82xdUZNs/zN/+3QSPBCBzR0LfVz+aXHRSI2P1lt8cp6xAoesyszzy+RQzETq8f6u3Tg6wBAAA="
+      }
+    }
+  }
+]
