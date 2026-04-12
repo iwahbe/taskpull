@@ -17,7 +17,13 @@ from pydantic_core import CoreSchema, core_schema
 from starlette.requests import Request
 from starlette.responses import Response
 
-from taskpull.engine_events import EngineEvent, SessionID, PRCreated, IssueCreated
+from taskpull.engine_events import (
+    EngineEvent,
+    SessionID,
+    PRCreated,
+    IssueCreated,
+    IssueClosed,
+)
 from taskpull.state_manager import StateFactory, StateManager
 
 log = logging.getLogger(__name__)
@@ -373,10 +379,12 @@ class LiveGitHubProxy(GitHubProxy):
         await self._queue.put(IssueCreated(session_id, body["url"]))
 
     async def _capture_rest_issue_edited(self, request: Request, response: Response):
-        raise NotImplementedError
+        if (await request.json())["state"] == "closed":
+            await self._queue.put(IssueClosed(json.loads(bytes(response.body))["url"]))
 
     async def _capture_rest_pr_edited(self, request: Request, response: Response):
-        raise NotImplementedError
+        if (await request.json())["state"] == "closed":
+            await self._queue.put(IssueClosed(json.loads(bytes(response.body))["url"]))
 
     async def _handle_graphql(
         self, request: Request, session_id: SessionID, overwrite: dict[str, str]
