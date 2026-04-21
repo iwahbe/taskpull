@@ -9,7 +9,7 @@ import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from collections.abc import Coroutine, Callable
-from typing import Protocol
+from typing import Protocol, Any, Literal
 
 import httpx
 from pydantic import BaseModel, GetCoreSchemaHandler
@@ -17,18 +17,52 @@ from pydantic_core import CoreSchema, core_schema
 from starlette.requests import Request
 from starlette.responses import Response
 from graphql import parse as gql_parse
-from graphql.language.ast import OperationDefinitionNode, OperationType
+from graphql.language.ast import FieldNode, OperationDefinitionNode, OperationType
 
 from taskpull.engine_events import (
     EngineEvent,
     SessionID,
     PRCreated,
+    PRClosed,
     IssueCreated,
     IssueClosed,
 )
 from taskpull.state_manager import StateFactory, StateManager
 
 log = logging.getLogger(__name__)
+
+_OnSuccess = Callable[[Request, Response], Coroutine]
+
+
+def _parse_receive_pack_refs(body: bytes) -> list[str] | None:
+    """Extract target ref names from a git-receive-pack pkt-line body.
+
+    Each update command is a length-prefixed pkt-line
+    `<4-hex-len><old-sha> <new-sha> <ref>\\x00<caps>\\n`; capabilities and
+    the trailing LF appear on the first command only. A flush-pkt (`0000`)
+    terminates the command list. Returns None on malformed input.
+    """
+    refs: list[str] = []
+    i = 0
+    while i + 4 <= len(body):
+        try:
+            length = int(body[i : i + 4], 16)
+        except ValueError:
+            return None
+        if length == 0:
+            return refs
+        if length < 4 or i + length > len(body):
+            return None
+        payload = body[i + 4 : i + length].rstrip(b"\n")
+        nul = payload.find(b"\x00")
+        if nul >= 0:
+            payload = payload[:nul]
+        parts = payload.split(b" ", 2)
+        if len(parts) != 3:
+            return None
+        refs.append(parts[2].decode())
+        i += length
+    return None
 
 
 class ProxyToken(str):
@@ -61,18 +95,23 @@ class Certs:
 class _SessionEntry(BaseModel):
     token: ProxyToken
     permissions: Permissions
-    repo_node_cache: dict[str, str] = {}
     branch: str | None = None
-
     created_issue_ids: dict[str, int] = {}  # Map from PR URL or Node ID to PR number
     created_pr_ids: dict[str, int] = {}  # Map from Issue URL or Node ID to Issue number
+    repo_nodes: dict[str, str] = {}  # Map from Repo Node ID to "{org}/{name}"
 
     def _add_entry(self, url: str, node_id: str, m: dict[str, int], kind: str):
+        html_kind = "pull" if kind == "pulls" else kind
+        number: str | None = None
         match url.removeprefix("https://").split("/"):
-            case [_host, "repos", _org, _repo, key, number] if key == kind:
-                m[url] = number
-                m[node_id] = number
-        raise ValueError(f"invalid url {url} for {kind}")
+            case [_host, "repos", _org, _repo, key, n] if key == kind:
+                number = n
+            case [_host, _org, _repo, key, n] if key == html_kind:
+                number = n
+        if number is None:
+            raise ValueError(f"invalid url {url} for {kind}")
+        m[url] = int(number)
+        m[node_id] = int(number)
 
     def add_pr(self, url: str, node_id: str):
         self._add_entry(url, node_id, self.created_pr_ids, "pulls")
@@ -244,10 +283,16 @@ class LiveGitHubProxy(GitHubProxy):
             return await self._forward(request, overwrite_headers)
 
         if request.method == "POST":
-            match request.url.path.split("/"):
+            match request.url.path.lstrip("/").split("/"):
                 case ["graphql"]:
                     return await self._handle_graphql(
-                        request, session_id, overwrite_headers
+                        request, session_id, session, overwrite_headers
+                    )
+                case [_owner, _repo_name, "git-upload-pack"]:
+                    return await self._forward(request, overwrite_headers)
+                case [owner, repo_name, "git-receive-pack"]:
+                    return await self._handle_git_push(
+                        request, session, owner, repo_name, overwrite_headers
                     )
                 case ["repos", org, repo, "pulls"]:
                     if session.permissions.allowed_repo != f"{org}/{repo}":
@@ -282,19 +327,18 @@ class LiveGitHubProxy(GitHubProxy):
                 case ["repos", org, repo, "issues", number, "labels"]:
                     if session.permissions.allowed_repo != f"{org}/{repo}":
                         return self._reject(f"Can only edit Issues in {org}/{repo}")
-                    if (
-                        int(number) not in session.created_issue_ids
-                        and int(number) not in session.created_pr_ids
+                    if int(number) not in set(session.created_issue_ids.values()) | set(
+                        session.created_pr_ids.values()
                     ):
                         return self._reject("Can only edit Issues you created")
                     return await self._forward(request, overwrite_headers)
 
         if request.method == "PATCH":
-            match request.url.path.split("/"):
+            match request.url.path.lstrip("/").split("/"):
                 case ["repos", org, repo, "issues", number]:
                     if session.permissions.allowed_repo != f"{org}/{repo}":
                         return self._reject(f"Can only edit Issues in {org}/{repo}")
-                    if int(number) not in session.created_issue_ids:
+                    if int(number) not in session.created_issue_ids.values():
                         return self._reject("Can only edit Issues you created")
                     return await self._forward(
                         request,
@@ -306,7 +350,7 @@ class LiveGitHubProxy(GitHubProxy):
                         return self._reject(
                             f"Can only edit Pull Requests in {org}/{repo}"
                         )
-                    if int(number) not in session.created_pr_ids:
+                    if int(number) not in session.created_pr_ids.values():
                         return self._reject("Can only edit Pull Requests you created")
                     return await self._forward(
                         request,
@@ -315,13 +359,12 @@ class LiveGitHubProxy(GitHubProxy):
                     )
 
         if request.method == "DELETE":
-            match request.url.path.split("/"):
+            match request.url.path.lstrip("/").split("/"):
                 case ["repos", org, repo, "issues", number, "labels", _name]:
                     if session.permissions.allowed_repo != f"{org}/{repo}":
                         return self._reject(f"Can only edit Issues in {org}/{repo}")
-                    if (
-                        int(number) not in session.created_issue_ids
-                        and int(number) not in session.created_pr_ids
+                    if int(number) not in set(session.created_issue_ids.values()) | set(
+                        session.created_pr_ids.values()
                     ):
                         return self._reject("Can only edit Issues you created")
                     return await self._forward(request, overwrite_headers)
@@ -334,7 +377,7 @@ class LiveGitHubProxy(GitHubProxy):
         self,
         request: Request,
         overwrite: dict[str, str] = {},
-        on_success: Callable[[Request, Response], Coroutine] | None = None,
+        on_success: _OnSuccess | None = None,
     ) -> Response:
         headers = dict(request.headers)
         headers.pop("host", None)
@@ -367,6 +410,7 @@ class LiveGitHubProxy(GitHubProxy):
     ):
         body = json.loads(bytes(response.body))
         session.add_pr(body["url"], body["node_id"])
+        await self._save()
         await self._queue.put(PRCreated(session_id, body["url"]))
 
     async def _capture_rest_issue_created(
@@ -378,6 +422,7 @@ class LiveGitHubProxy(GitHubProxy):
     ):
         body = json.loads(bytes(response.body))
         session.add_issue(body["url"], body["node_id"])
+        await self._save()
         await self._queue.put(IssueCreated(session_id, body["url"]))
 
     async def _capture_rest_issue_edited(self, request: Request, response: Response):
@@ -386,30 +431,138 @@ class LiveGitHubProxy(GitHubProxy):
 
     async def _capture_rest_pr_edited(self, request: Request, response: Response):
         if (await request.json())["state"] == "closed":
-            await self._queue.put(IssueClosed(json.loads(bytes(response.body))["url"]))
+            await self._queue.put(PRClosed(json.loads(bytes(response.body))["url"]))
+
+    async def _handle_git_push(
+        self,
+        request: Request,
+        session: _SessionEntry,
+        owner: str,
+        repo_name: str,
+        overwrite: dict[str, str],
+    ) -> Response:
+        repo = repo_name.removesuffix(".git")
+        if session.permissions.allowed_repo != f"{owner}/{repo}":
+            return self._reject(f"Can only push to {session.permissions.allowed_repo}")
+
+        refs = _parse_receive_pack_refs(await request.body())
+        if refs is None:
+            return self._reject("Cannot parse git-receive-pack request")
+        unique = set(refs)
+        if len(unique) != 1:
+            return self._reject("git-receive-pack must target a single ref")
+        [ref] = unique
+        if not ref.startswith("refs/heads/"):
+            return self._reject(f"Can only push to a branch, not '{ref}'")
+        branch = ref.removeprefix("refs/heads/")
+
+        if session.branch is not None:
+            if branch != session.branch:
+                return self._reject(
+                    f"Can only push to branch '{session.branch}', not '{branch}'"
+                )
+            return await self._forward(request, overwrite)
+
+        async def _record_branch(_req: Request, _resp: Response):
+            session.branch = branch
+            await self._save()
+
+        return await self._forward(request, overwrite, on_success=_record_branch)
 
     async def _handle_graphql(
-        self, request: Request, session_id: SessionID, overwrite: dict[str, str]
+        self,
+        request: Request,
+        session_id: SessionID,
+        session: _SessionEntry,
+        overwrite: dict[str, str],
     ) -> Response:
-        for defn in gql_parse(bytes(await request.body()).decode()).definitions:
+        body = await request.json()
+        on_success_hooks = []
+        for defn in gql_parse(body["query"]).definitions:
             if not isinstance(defn, OperationDefinitionNode):
                 return self._reject(f"Invalid GraphQL query: {type(defn)}")
             match defn.operation:
                 case OperationType.QUERY | OperationType.SUBSCRIPTION:
                     continue
                 case OperationType.MUTATION:
-                    if self._graphql_mutation_is_ok(session_id, defn):
-                        continue
-                    return self._reject(f"Forbidden GraphQL query: {type(defn)}")
+                    strategy = await self._handle_graphql_mutation_operation(
+                        session_id, session, defn, body.get("variables", {})
+                    )
+                    if strategy is False:
+                        return self._reject(f"Forbidden GraphQL query: {type(defn)}")
+
+                    if strategy is not None:
+                        on_success_hooks.append(strategy)
+                    continue
 
             raise NotImplementedError(f"{defn.operation} not handled")
 
-        return await self._forward(request, overwrite)
+        async def on_success(req, resp):
+            await asyncio.gather(*[f(req, resp) for f in on_success_hooks])
 
-    def _graphql_mutation_is_ok(
-        self, session_id: SessionID, defn: OperationDefinitionNode
-    ) -> bool:
-        return False
+        return await self._forward(request, overwrite, on_success)
+
+    async def _handle_graphql_mutation_operation(
+        self,
+        session_id: SessionID,
+        session: _SessionEntry,
+        defn: OperationDefinitionNode,
+        variables: dict[str, Any],
+    ) -> _OnSuccess | None | Literal[False]:
+        for sel in defn.selection_set.selections:
+            if not isinstance(sel, FieldNode):
+                return False
+            match sel.name.value:
+                case "createPullRequest":
+                    input = variables.get("input", {})
+                    repo_id = input.get("repositoryId")
+                    if not isinstance(repo_id, str):
+                        return False
+                    resolved = await self._resolve_repo_node(repo_id)
+                    if resolved is None or resolved != session.permissions.allowed_repo:
+                        return False
+                    if (
+                        session.branch is None
+                        or input.get("headRefName") != session.branch
+                    ):
+                        return False
+
+                    async def on_pr_created(_req: Request, resp: Response):
+                        data = json.loads(bytes(resp.body))
+                        pr = data["data"]["createPullRequest"]["pullRequest"]
+                        session.add_pr(pr["url"], pr["id"])
+                        await self._save()
+                        await self._queue.put(PRCreated(session_id, pr["url"]))
+
+                    return on_pr_created
+                case _:
+                    return False
+        return None
+
+    async def _resolve_repo_node(self, node_id: str) -> str | None:
+        """Resolve a GitHub node ID to "owner/repo" via the API."""
+        resp = await self._http_client.request(
+            method="POST",
+            url="https://api.github.com/graphql",
+            headers={
+                "authorization": f"token {self._gh_token}",
+                "content-type": "application/json",
+            },
+            content=json.dumps(
+                {
+                    "query": "query($id:ID!){node(id:$id){...on Repository{name owner{login}}}}",
+                    "variables": {"id": node_id},
+                }
+            ).encode(),
+        )
+        if resp.status_code != 200:
+            return None
+        try:
+            data = resp.json()
+            node = data["data"]["node"]
+            return f"{node['owner']['login']}/{node['name']}"
+        except KeyError, TypeError:
+            return None
 
     def _reject(self, reason: str) -> Response:
         return Response(
@@ -432,13 +585,13 @@ class LiveGitHubProxy(GitHubProxy):
             try:
                 [session_id, _] = next(
                     filter(
-                        lambda entry: entry[1].proxy_token == token,
+                        lambda entry: entry[1].token == token,
                         self._sessions.items(),
                     )
                 )
-                return session_id, "Basic " + str(
-                    base64.b64encode(f"{username}:{self._gh_token}".encode())
-                )
+                return session_id, "Basic " + base64.b64encode(
+                    f"{username}:{self._gh_token}".encode()
+                ).decode()
             except StopIteration:
                 # No matching session, so pass through
                 return
@@ -448,7 +601,7 @@ class LiveGitHubProxy(GitHubProxy):
                 try:
                     [session_id, _] = next(
                         filter(
-                            lambda entry: entry[1].proxy_token == token,
+                            lambda entry: entry[1].token == token,
                             self._sessions.items(),
                         )
                     )

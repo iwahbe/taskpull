@@ -24,10 +24,10 @@ class InMemoryStateManager(StateManager[T]):
         self._state: T | None = None
 
     async def save(self, state: T) -> None:
-        self._state = state
+        self._state = state.model_copy(deep=True)
 
     async def load(self) -> T | None:
-        return self._state
+        return self._state.model_copy(deep=True) if self._state is not None else None
 
 
 class FileStateManager(StateManager[T]):
