@@ -99,6 +99,7 @@ class _SessionEntry(BaseModel):
     created_issue_ids: dict[str, int] = {}  # Map from PR URL or Node ID to PR number
     created_pr_ids: dict[str, int] = {}  # Map from Issue URL or Node ID to Issue number
     repo_nodes: dict[str, str] = {}  # Map from Repo Node ID to "{org}/{name}"
+    node_urls: dict[str, str] = {}  # Map from Issue/PR Node ID to HTML URL
 
     def _add_entry(self, url: str, node_id: str, m: dict[str, int], kind: str):
         html_kind = "pull" if kind == "pulls" else kind
@@ -146,9 +147,9 @@ class GitHubProxy(ABC):
 class LiveGitHubProxy(GitHubProxy):
     """Production GitHub proxy that enforces per-session permissions.
 
-    All requests are authenticated by a proxy token in the Authorization header.
-    The proxy maps each token to a session, then decides whether to forward the
-    request to GitHub (injecting the real token) or reject it.
+    The proxy applies to all requests that are authenticated by a proxy token in the
+    Authorization header.  The proxy maps each token to a session, then decides whether to
+    forward the request to GitHub (injecting the real token) or reject it.
 
     ## Read requests
 
@@ -217,6 +218,7 @@ class LiveGitHubProxy(GitHubProxy):
     When a mutation references a repositoryId not in the cache, the proxy
     resolves it by querying GitHub's node API before making the allow/deny
     decision. Resolved mappings are persisted in the session's repo_node_cache.
+
     """
 
     def __init__(
@@ -410,8 +412,9 @@ class LiveGitHubProxy(GitHubProxy):
     ):
         body = json.loads(bytes(response.body))
         session.add_pr(body["url"], body["node_id"])
+        session.node_urls[body["node_id"]] = body["html_url"]
         await self._save()
-        await self._queue.put(PRCreated(session_id, body["url"]))
+        await self._queue.put(PRCreated(session_id, body["html_url"]))
 
     async def _capture_rest_issue_created(
         self,
@@ -422,16 +425,21 @@ class LiveGitHubProxy(GitHubProxy):
     ):
         body = json.loads(bytes(response.body))
         session.add_issue(body["url"], body["node_id"])
+        session.node_urls[body["node_id"]] = body["html_url"]
         await self._save()
-        await self._queue.put(IssueCreated(session_id, body["url"]))
+        await self._queue.put(IssueCreated(session_id, body["html_url"]))
 
     async def _capture_rest_issue_edited(self, request: Request, response: Response):
         if (await request.json())["state"] == "closed":
-            await self._queue.put(IssueClosed(json.loads(bytes(response.body))["url"]))
+            await self._queue.put(
+                IssueClosed(json.loads(bytes(response.body))["html_url"])
+            )
 
     async def _capture_rest_pr_edited(self, request: Request, response: Response):
         if (await request.json())["state"] == "closed":
-            await self._queue.put(PRClosed(json.loads(bytes(response.body))["url"]))
+            await self._queue.put(
+                PRClosed(json.loads(bytes(response.body))["html_url"])
+            )
 
     async def _handle_git_push(
         self,
@@ -518,7 +526,7 @@ class LiveGitHubProxy(GitHubProxy):
                     repo_id = input.get("repositoryId")
                     if not isinstance(repo_id, str):
                         return False
-                    resolved = await self._resolve_repo_node(repo_id)
+                    resolved = await self._resolve_repo_node(session, repo_id)
                     if resolved is None or resolved != session.permissions.allowed_repo:
                         return False
                     if (
@@ -531,16 +539,91 @@ class LiveGitHubProxy(GitHubProxy):
                         data = json.loads(bytes(resp.body))
                         pr = data["data"]["createPullRequest"]["pullRequest"]
                         session.add_pr(pr["url"], pr["id"])
+                        session.node_urls[pr["id"]] = pr["url"]
                         await self._save()
                         await self._queue.put(PRCreated(session_id, pr["url"]))
 
                     return on_pr_created
+                case "createIssue":
+                    input = variables.get("input", {})
+                    repo_id = input.get("repositoryId")
+                    if not isinstance(repo_id, str):
+                        return False
+                    resolved = await self._resolve_repo_node(session, repo_id)
+                    if resolved is None or resolved != session.permissions.allowed_repo:
+                        return False
+
+                    async def on_issue_created(_req: Request, resp: Response):
+                        data = json.loads(bytes(resp.body))
+                        issue = data["data"]["createIssue"]["issue"]
+                        session.add_issue(issue["url"], issue["id"])
+                        session.node_urls[issue["id"]] = issue["url"]
+                        await self._save()
+                        await self._queue.put(IssueCreated(session_id, issue["url"]))
+
+                    return on_issue_created
+                case "closeIssue":
+                    issue_id = variables.get("input", {}).get("issueId")
+                    if (
+                        not isinstance(issue_id, str)
+                        or issue_id not in session.created_issue_ids
+                    ):
+                        return False
+
+                    async def on_issue_closed(_req: Request, _resp: Response):
+                        await self._queue.put(IssueClosed(session.node_urls[issue_id]))
+
+                    return on_issue_closed
+                case "closePullRequest":
+                    pr_id = variables.get("input", {}).get("pullRequestId")
+                    if (
+                        not isinstance(pr_id, str)
+                        or pr_id not in session.created_pr_ids
+                    ):
+                        return False
+
+                    async def on_pr_closed(_req: Request, _resp: Response):
+                        await self._queue.put(PRClosed(session.node_urls[pr_id]))
+
+                    return on_pr_closed
+                case "updateIssue":
+                    issue_id = variables.get("input", {}).get("id")
+                    if (
+                        not isinstance(issue_id, str)
+                        or issue_id not in session.created_issue_ids
+                    ):
+                        return False
+                    return None
+                case "updatePullRequest":
+                    pr_id = variables.get("input", {}).get("pullRequestId")
+                    if (
+                        not isinstance(pr_id, str)
+                        or pr_id not in session.created_pr_ids
+                    ):
+                        return False
+                    return None
+                case "addLabelsToLabelable" | "removeLabelsFromLabelable":
+                    labelable_id = variables.get("input", {}).get("labelableId")
+                    if not isinstance(labelable_id, str) or (
+                        labelable_id not in session.created_issue_ids
+                        and labelable_id not in session.created_pr_ids
+                    ):
+                        return False
+                    return None
                 case _:
                     return False
         return None
 
-    async def _resolve_repo_node(self, node_id: str) -> str | None:
-        """Resolve a GitHub node ID to "owner/repo" via the API."""
+    async def _resolve_repo_node(
+        self, session: _SessionEntry, node_id: str
+    ) -> str | None:
+        """Resolve a GitHub repository node ID to "owner/repo".
+
+        Results are cached into the session's `repo_nodes` so subsequent
+        mutations referencing the same repository skip the round-trip.
+        """
+        if node_id in session.repo_nodes:
+            return session.repo_nodes[node_id]
         resp = await self._http_client.request(
             method="POST",
             url="https://api.github.com/graphql",
@@ -560,9 +643,11 @@ class LiveGitHubProxy(GitHubProxy):
         try:
             data = resp.json()
             node = data["data"]["node"]
-            return f"{node['owner']['login']}/{node['name']}"
+            slug = f"{node['owner']['login']}/{node['name']}"
         except KeyError, TypeError:
             return None
+        session.repo_nodes[node_id] = slug
+        return slug
 
     def _reject(self, reason: str) -> Response:
         return Response(

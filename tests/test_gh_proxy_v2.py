@@ -135,7 +135,7 @@ async def test_rest_create_issue_on_allowed_repo_forwards_and_emits_event():
     event = await asyncio.wait_for(queue.get(), timeout=0.5)
     assert event == IssueCreated(
         session_id=session_id,
-        issue_url="https://api.github.com/repos/owner/repo/issues/42",
+        issue_url="https://github.com/owner/repo/issues/42",
     )
 
 
@@ -632,7 +632,7 @@ async def test_rest_create_pr_after_pushing_branch_forwards_and_emits_event():
     event = await asyncio.wait_for(queue.get(), timeout=0.5)
     assert event == PRCreated(
         session_id=session_id,
-        pr_url="https://api.github.com/repos/owner/repo/pulls/7",
+        pr_url="https://github.com/owner/repo/pull/7",
     )
 
 
@@ -648,6 +648,7 @@ async def test_rest_patch_issue_created_by_session_is_allowed_and_close_emits_ev
     """
     gh_issue = {
         "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
         "node_id": "I_kwDOABCDEF",
         "number": 42,
     }
@@ -735,7 +736,7 @@ async def test_rest_patch_issue_created_by_session_is_allowed_and_close_emits_ev
 
     event = await asyncio.wait_for(queue.get(), timeout=0.5)
     assert event == IssueClosed(
-        issue_url="https://api.github.com/repos/owner/repo/issues/42",
+        issue_url="https://github.com/owner/repo/issues/42",
     )
 
 
@@ -749,6 +750,7 @@ async def test_rest_patch_issue_not_created_by_session_is_rejected():
     """
     gh_created = {
         "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
         "node_id": "I_kwDOABCDEF",
         "number": 42,
     }
@@ -796,6 +798,83 @@ async def test_rest_patch_issue_not_created_by_session_is_rejected():
         patch_req = _make_request(
             method="PATCH",
             url="https://api.github.com/repos/owner/repo/issues/99",
+            headers={
+                "host": "api.github.com",
+                "authorization": f"token {proxy_token}",
+                "content-type": "application/json",
+                "content-length": str(len(patch_body)),
+            },
+            body=patch_body,
+        )
+        response = await proxy.handle(patch_req)
+
+    assert response.status_code == 403
+    assert len(captured) == 1
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_rest_patch_issue_in_wrong_repo_is_rejected_even_for_matching_number():
+    """Per the docstring contract: PATCH /repos/{owner}/{repo}/issues/{n}
+    is only allowed when the request targets the session's `allowed_repo`.
+
+    Session ownership is tracked by issue number, so a naive check that
+    only verifies the number is in `created_issue_ids` would wrongly
+    accept a PATCH targeting the same number in a different repo. The
+    proxy must reject such a request with 403 and not forward it — issue
+    numbers collide across repos, so cross-repo PATCH via number-collision
+    would be a session-scope escape.
+    """
+    gh_created = {
+        "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
+        "node_id": "I_kwDOABCDEF",
+        "number": 42,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(201, json=gh_created)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="owner/repo")
+        )
+
+        create_body = json.dumps({"title": "Bug"}).encode()
+        create_req = _make_request(
+            method="POST",
+            url="https://api.github.com/repos/owner/repo/issues",
+            headers={
+                "host": "api.github.com",
+                "authorization": f"token {proxy_token}",
+                "content-type": "application/json",
+                "content-length": str(len(create_body)),
+            },
+            body=create_body,
+        )
+        create_resp = await proxy.handle(create_req)
+        assert create_resp.status_code == 201
+
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        patch_body = json.dumps({"state": "closed"}).encode()
+        patch_req = _make_request(
+            method="PATCH",
+            url="https://api.github.com/repos/other-owner/other-repo/issues/42",
             headers={
                 "host": "api.github.com",
                 "authorization": f"token {proxy_token}",
@@ -972,7 +1051,7 @@ async def test_rest_patch_pr_close_emits_pr_closed_event():
 
     event = await asyncio.wait_for(queue.get(), timeout=0.5)
     assert event == PRClosed(
-        pr_url="https://api.github.com/repos/owner/repo/pulls/7",
+        pr_url="https://github.com/owner/repo/pull/7",
     )
 
 
@@ -1199,6 +1278,10 @@ async def test_graphql_create_pull_request_forwards_and_emits_event():
     assert forwarded.content == _FIXTURE_CREATE_PR_REQUEST
 
     event = await asyncio.wait_for(queue.get(), timeout=0.5)
+    # Events must carry the HTML URL (https://github.com/...), the same
+    # shape emitted on the REST path. GraphQL's createPullRequest response
+    # already returns the HTML URL directly, so the proxy can pass it
+    # through as-is.
     assert event == PRCreated(
         session_id=session_id,
         pr_url="https://github.com/iwahbe/taskpull/pull/9",
@@ -1504,6 +1587,7 @@ async def test_rest_add_labels_to_session_created_issue_is_forwarded():
     """
     gh_issue = {
         "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
         "node_id": "I_kwDOABCDEF",
         "number": 42,
     }
@@ -1591,6 +1675,7 @@ async def test_rest_add_labels_to_issue_not_created_by_session_is_rejected():
     """
     gh_created = {
         "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
         "node_id": "I_kwDOABCDEF",
         "number": 42,
     }
@@ -1663,6 +1748,7 @@ async def test_rest_delete_label_from_session_created_issue_is_forwarded():
     """
     gh_issue = {
         "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
         "node_id": "I_kwDOABCDEF",
         "number": 42,
     }
@@ -1748,6 +1834,7 @@ async def test_rest_delete_label_from_issue_not_created_by_session_is_rejected()
     """
     gh_created = {
         "url": "https://api.github.com/repos/owner/repo/issues/42",
+        "html_url": "https://github.com/owner/repo/issues/42",
         "node_id": "I_kwDOABCDEF",
         "number": 42,
     }
@@ -1857,3 +1944,1175 @@ async def test_rest_write_to_unknown_path_is_rejected():
     assert response.status_code == 403
     assert captured == []
     assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_write_is_passed_through_without_injecting_token():
+    """An incoming request with no proxy token must be forwarded as-is,
+    without the proxy injecting its real GitHub token. Using DELETE
+    /repos/{owner}/{repo} — the repo-deletion endpoint — as the canary:
+    if the proxy ever inserted its token here, an unauthenticated caller
+    could destroy any repo the token can reach.
+
+    The proxy must neither reject the request nor rewrite its
+    Authorization header; upstream GitHub is the authority that decides
+    whether to accept it. No events are emitted.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(401, json={"message": "Requires authentication"})
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="owner/repo")
+        )
+
+        request = _make_request(
+            method="DELETE",
+            url="https://api.github.com/repos/owner/repo",
+            headers={
+                "host": "api.github.com",
+                "accept": "application/vnd.github+json",
+            },
+        )
+
+        response = await proxy.handle(request)
+
+    assert len(captured) == 1
+    forwarded = captured[0]
+    assert forwarded.method == "DELETE"
+    assert str(forwarded.url) == "https://api.github.com/repos/owner/repo"
+    assert "gh-real-token" not in forwarded.headers.get("authorization", "")
+    assert "authorization" not in {k.lower() for k in forwarded.headers}
+
+    assert response.status_code == 401
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# Verbatim request/response bodies for GraphQL mutations in tests/fixtures/.
+# Pinned so tests exercise the exact bytes the GitHub CLI sends in practice.
+# ---------------------------------------------------------------------------
+
+# From tests/fixtures/create_issue.json (exchange 1).
+_FIXTURE_CREATE_ISSUE_REQUEST = (
+    b'{"query":"\\n\\tmutation IssueCreate($input: CreateIssueInput!) {'
+    b"\\n\\t\\tcreateIssue(input: $input) {"
+    b"\\n\\t\\t\\tissue {"
+    b"\\n\\t\\t\\t\\tid"
+    b"\\n\\t\\t\\t\\turl"
+    b"\\n\\t\\t\\t}"
+    b"\\n\\t\\t}"
+    b'\\n\\t}",'
+    b'"variables":{"input":{'
+    b'"body":"This is a test issue created to capture GH API traffic for proxy tests. Safe to close.",'
+    b'"repositoryId":"R_kgDORru3Uw",'
+    b'"title":"Test issue for proxy capture"'
+    b"}}}"
+)
+_FIXTURE_CREATE_ISSUE_RESPONSE = (
+    '{"data":{"createIssue":{"issue":'
+    '{"id":"I_kwDORru3U8780gDh",'
+    '"url":"https://github.com/iwahbe/taskpull/issues/1"}}}}'
+)
+
+# From tests/fixtures/close_issue.json (exchange 1). Trailing \n preserved.
+_FIXTURE_CLOSE_ISSUE_REQUEST = (
+    b'{"query":"mutation IssueClose($input:CloseIssueInput!)'
+    b'{closeIssue(input: $input){issue{id}}}",'
+    b'"variables":{"input":'
+    b'{"issueId":"I_kwDORru3U8780gDh","stateReason":"NOT_PLANNED"}}}\n'
+)
+_FIXTURE_CLOSE_ISSUE_RESPONSE = (
+    '{"data":{"closeIssue":{"issue":{"id":"I_kwDORru3U8780gDh"}}}}'
+)
+
+# From tests/fixtures/close_pr.json (exchange 1). Trailing \n preserved.
+_FIXTURE_CLOSE_PR_REQUEST = (
+    b'{"query":"mutation PullRequestClose($input:ClosePullRequestInput!)'
+    b'{closePullRequest(input: $input){pullRequest{id}}}",'
+    b'"variables":{"input":{"pullRequestId":"PR_kwDORru3U87RmFVG"}}}\n'
+)
+_FIXTURE_CLOSE_PR_RESPONSE = (
+    '{"data":{"closePullRequest":{"pullRequest":{"id":"PR_kwDORru3U87RmFVG"}}}}'
+)
+
+# From tests/fixtures/edit_issue.json (exchange 1). Trailing \n preserved.
+_FIXTURE_UPDATE_ISSUE_REQUEST = (
+    b'{"query":"mutation IssueUpdate($input:UpdateIssueInput!)'
+    b'{updateIssue(input: $input){__typename}}",'
+    b'"variables":{"input":{'
+    b'"id":"I_kwDORru3U87829yE",'
+    b'"title":"Edit test issue (graphql updated)",'
+    b'"body":"Updated body via GraphQL"}}}\n'
+)
+_FIXTURE_UPDATE_ISSUE_RESPONSE = (
+    '{"data":{"updateIssue":{"__typename":"UpdateIssuePayload"}}}'
+)
+
+# From tests/fixtures/edit_pr.json (exchange 2). Trailing \n preserved.
+_FIXTURE_UPDATE_PR_REQUEST = (
+    b'{"query":"mutation PullRequestUpdate($input:UpdatePullRequestInput!)'
+    b'{updatePullRequest(input: $input){__typename}}",'
+    b'"variables":{"input":{'
+    b'"pullRequestId":"PR_kwDORru3U87RmEUU",'
+    b'"title":"Edit test PR (graphql updated)",'
+    b'"body":"Updated body via GraphQL"}}}\n'
+)
+_FIXTURE_UPDATE_PR_RESPONSE = (
+    '{"data":{"updatePullRequest":{"__typename":"UpdatePullRequestPayload"}}}'
+)
+
+# From tests/fixtures/add_labels.json (exchange 2). Trailing \n preserved.
+_FIXTURE_ADD_LABELS_REQUEST = (
+    b'{"query":"mutation LabelAdd($input:AddLabelsToLabelableInput!)'
+    b'{addLabelsToLabelable(input: $input){__typename}}",'
+    b'"variables":{"input":{'
+    b'"labelableId":"I_kwDORru3U8783GEO",'
+    b'"labelIds":["LA_kwDORru3U88AAAACcDusPQ",'
+    b'"LA_kwDORru3U88AAAACcDusVg"]}}}\n'
+)
+_FIXTURE_ADD_LABELS_RESPONSE = (
+    '{"data":{"addLabelsToLabelable":{"__typename":"AddLabelsToLabelablePayload"}}}'
+)
+
+# From tests/fixtures/remove_labels.json (exchange 2). Trailing \n preserved.
+_FIXTURE_REMOVE_LABELS_REQUEST = (
+    b'{"query":"mutation LabelRemove($input:RemoveLabelsFromLabelableInput!)'
+    b'{removeLabelsFromLabelable(input: $input){__typename}}",'
+    b'"variables":{"input":{'
+    b'"labelableId":"I_kwDORru3U8783GEO",'
+    b'"labelIds":["LA_kwDORru3U88AAAACcDusPQ"]}}}\n'
+)
+_FIXTURE_REMOVE_LABELS_RESPONSE = (
+    '{"data":{"removeLabelsFromLabelable":'
+    '{"__typename":"RemoveLabelsFromLabelablePayload"}}}'
+)
+
+
+def _gql_request(body: bytes, proxy_token: str) -> Request:
+    return _make_request(
+        method="POST",
+        url="https://api.github.com/graphql",
+        headers={
+            "host": "api.github.com",
+            "authorization": f"token {proxy_token}",
+            "content-type": "application/json",
+            "content-length": str(len(body)),
+        },
+        body=body,
+    )
+
+
+async def _bootstrap_rest_issue(
+    proxy: LiveGitHubProxy, proxy_token: str, url: str, node_id: str
+) -> None:
+    """Create an issue via REST so the session owns `node_id`."""
+    body = json.dumps({"title": "bootstrap"}).encode()
+    request = _make_request(
+        method="POST",
+        url="https://api.github.com/repos/iwahbe/taskpull/issues",
+        headers={
+            "host": "api.github.com",
+            "authorization": f"token {proxy_token}",
+            "content-type": "application/json",
+            "content-length": str(len(body)),
+        },
+        body=body,
+    )
+    response = await proxy.handle(request)
+    assert response.status_code == 201, response.body
+
+
+# ---------------------------------------------------------------------------
+# createIssue — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_create_issue_in_allowed_repo_forwards_and_emits_event():
+    """Per the docstring contract: a `createIssue` GraphQL mutation is
+    allowed when its `input.repositoryId` resolves (via node-id lookup) to
+    the session's `allowed_repo`. The proxy must forward the mutation
+    unchanged, return GitHub's response unchanged, emit an `IssueCreated`
+    event, and record the new issue's node id so subsequent
+    updateIssue/closeIssue mutations on the same node are authorised.
+
+    Request/response bodies are the verbatim strings captured in
+    tests/fixtures/create_issue.json.
+    """
+    resolve_response = {
+        "data": {"node": {"name": "taskpull", "owner": {"login": "iwahbe"}}}
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        body_text = request.content.decode()
+        if "node(id:" in body_text:
+            return httpx.Response(200, json=resolve_response)
+        if "createIssue" in body_text:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_CREATE_ISSUE_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CREATE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_CREATE_ISSUE_RESPONSE
+
+    forwarded_mutations = [r for r in captured if b"createIssue" in r.content]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_CREATE_ISSUE_REQUEST
+
+    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+    # Events must carry the HTML URL (https://github.com/...), the same
+    # shape emitted on the REST path. GraphQL's createIssue response
+    # already returns the HTML URL directly.
+    assert event == IssueCreated(
+        session_id=session_id,
+        issue_url="https://github.com/iwahbe/taskpull/issues/1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_graphql_create_issue_in_wrong_repo_is_rejected():
+    """Per the docstring contract: `createIssue` is rejected when
+    `input.repositoryId` does not resolve to the session's `allowed_repo`.
+    The mutation must not be forwarded and no event may be emitted.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        body_text = request.content.decode()
+        if "node(id:" in body_text:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"node": {"name": "other", "owner": {"login": "someone"}}}
+                },
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CREATE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert all(b"createIssue" not in r.content for r in captured)
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# closeIssue — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_close_issue_created_by_session_forwards_and_emits_event():
+    """Per the docstring contract: `closeIssue` is allowed when its
+    `input.issueId` was created earlier in this session. The proxy must
+    forward the mutation, return GitHub's response unchanged, and emit an
+    `IssueClosed` event carrying the issue's tracked URL.
+    """
+    rest_issue = {
+        "url": "https://api.github.com/repos/iwahbe/taskpull/issues/1",
+        "html_url": "https://github.com/iwahbe/taskpull/issues/1",
+        "node_id": "I_kwDORru3U8780gDh",
+        "number": 1,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/issues") and request.method == "POST":
+            return httpx.Response(201, json=rest_issue)
+        if b"closeIssue" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_CLOSE_ISSUE_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        await _bootstrap_rest_issue(
+            proxy, proxy_token, rest_issue["url"], rest_issue["node_id"]
+        )
+        # Drain the IssueCreated emitted by the bootstrap.
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CLOSE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_CLOSE_ISSUE_RESPONSE
+
+    forwarded_mutations = [r for r in captured if b"closeIssue" in r.content]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_CLOSE_ISSUE_REQUEST
+
+    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+    assert event == IssueClosed(
+        issue_url="https://github.com/iwahbe/taskpull/issues/1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_graphql_close_issue_not_created_by_session_is_rejected():
+    """Per the docstring contract: `closeIssue` is rejected when its
+    `input.issueId` was not tracked as created by this session. No
+    upstream request, no event.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CLOSE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert captured == []
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# closePullRequest — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_close_pr_created_by_session_forwards_and_emits_event():
+    """Per the docstring contract: `closePullRequest` is allowed when its
+    `input.pullRequestId` was created earlier in this session. The proxy
+    must forward the mutation, return GitHub's response unchanged, and
+    emit a `PRClosed` event.
+
+    The PR is bootstrapped via REST POST /pulls. Closing via GraphQL
+    must emit the same `PRClosed(pr_url=...)` that closing via REST
+    would emit — the event stream is channel-independent, and all event
+    URLs use the `https://github.com/...` (HTML) shape.
+    """
+    created_pr = {
+        "url": "https://api.github.com/repos/iwahbe/taskpull/pulls/9",
+        "html_url": "https://github.com/iwahbe/taskpull/pull/9",
+        "node_id": "PR_kwDORru3U87RmFVG",
+        "number": 9,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/git-receive-pack"):
+            return httpx.Response(
+                200,
+                content=b"",
+                headers={"content-type": "application/x-git-receive-pack-result"},
+            )
+        if request.url.path.endswith("/pulls") and request.method == "POST":
+            return httpx.Response(201, json=created_pr)
+        if b"closePullRequest" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_CLOSE_PR_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        push_resp = await proxy.handle(
+            _push_request("iwahbe/taskpull", "refs/heads/recapture-test", proxy_token)
+        )
+        assert push_resp.status_code == 200
+        pr_body = json.dumps(
+            {"title": "x", "head": "recapture-test", "base": "main"}
+        ).encode()
+        create_resp = await proxy.handle(
+            _make_request(
+                method="POST",
+                url="https://api.github.com/repos/iwahbe/taskpull/pulls",
+                headers={
+                    "host": "api.github.com",
+                    "authorization": f"token {proxy_token}",
+                    "content-type": "application/json",
+                    "content-length": str(len(pr_body)),
+                },
+                body=pr_body,
+            )
+        )
+        assert create_resp.status_code == 201
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CLOSE_PR_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_CLOSE_PR_RESPONSE
+
+    forwarded_mutations = [r for r in captured if b"closePullRequest" in r.content]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_CLOSE_PR_REQUEST
+
+    event = await asyncio.wait_for(queue.get(), timeout=0.5)
+    assert event == PRClosed(
+        pr_url="https://github.com/iwahbe/taskpull/pull/9",
+    )
+
+
+@pytest.mark.asyncio
+async def test_graphql_close_pr_not_created_by_session_is_rejected():
+    """Per the docstring contract: `closePullRequest` is rejected when
+    its `input.pullRequestId` was not created by this session.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CLOSE_PR_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert captured == []
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# updateIssue — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_update_issue_created_by_session_is_forwarded():
+    """Per the docstring contract: `updateIssue` is allowed when
+    `input.id` was created earlier in this session. The proxy forwards
+    the mutation unchanged and returns GitHub's response unchanged. No
+    event is emitted (events fire on close, not generic edits).
+    """
+    rest_issue = {
+        "url": "https://api.github.com/repos/iwahbe/taskpull/issues/5",
+        "html_url": "https://github.com/iwahbe/taskpull/issues/5",
+        "node_id": "I_kwDORru3U87829yE",
+        "number": 5,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/issues") and request.method == "POST":
+            return httpx.Response(201, json=rest_issue)
+        if b"updateIssue" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_UPDATE_ISSUE_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        await _bootstrap_rest_issue(
+            proxy, proxy_token, rest_issue["url"], rest_issue["node_id"]
+        )
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_UPDATE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_UPDATE_ISSUE_RESPONSE
+
+    forwarded_mutations = [r for r in captured if b"updateIssue" in r.content]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_UPDATE_ISSUE_REQUEST
+
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_graphql_update_issue_not_created_by_session_is_rejected():
+    """Per the docstring contract: `updateIssue` is rejected when
+    `input.id` was not created by this session.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_UPDATE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert captured == []
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# updatePullRequest — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_update_pr_created_by_session_is_forwarded():
+    """Per the docstring contract: `updatePullRequest` is allowed when
+    `input.pullRequestId` was created earlier in this session. The proxy
+    forwards the mutation unchanged. No event is emitted.
+
+    The fixture mutation targets PR_kwDORru3U87RmEUU, so the bootstrap
+    REST POST is mocked to return that same node id — seeding the
+    session's created-PR set so the update is authorised.
+    """
+    created_pr = {
+        "url": "https://api.github.com/repos/iwahbe/taskpull/pulls/6",
+        "html_url": "https://github.com/iwahbe/taskpull/pull/6",
+        "node_id": "PR_kwDORru3U87RmEUU",
+        "number": 6,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/git-receive-pack"):
+            return httpx.Response(
+                200,
+                content=b"",
+                headers={"content-type": "application/x-git-receive-pack-result"},
+            )
+        if request.url.path.endswith("/pulls") and request.method == "POST":
+            return httpx.Response(201, json=created_pr)
+        if b"updatePullRequest" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_UPDATE_PR_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        # Push + open a PR via REST to seed created_pr_ids with RmEUU.
+        await proxy.handle(
+            _push_request("iwahbe/taskpull", "refs/heads/recapture-test", proxy_token)
+        )
+        pr_body = json.dumps(
+            {"title": "x", "head": "recapture-test", "base": "main"}
+        ).encode()
+        await proxy.handle(
+            _make_request(
+                method="POST",
+                url="https://api.github.com/repos/iwahbe/taskpull/pulls",
+                headers={
+                    "host": "api.github.com",
+                    "authorization": f"token {proxy_token}",
+                    "content-type": "application/json",
+                    "content-length": str(len(pr_body)),
+                },
+                body=pr_body,
+            )
+        )
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_UPDATE_PR_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_UPDATE_PR_RESPONSE
+
+    forwarded_mutations = [r for r in captured if b"updatePullRequest" in r.content]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_UPDATE_PR_REQUEST
+
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_graphql_update_pr_not_created_by_session_is_rejected():
+    """Per the docstring contract: `updatePullRequest` is rejected when
+    `input.pullRequestId` was not created by this session.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_UPDATE_PR_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert captured == []
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# addLabelsToLabelable — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_add_labels_to_session_created_labelable_is_forwarded():
+    """Per the docstring contract: `addLabelsToLabelable` is allowed when
+    `input.labelableId` names an issue or PR created earlier in this
+    session. The proxy forwards the mutation unchanged. No event emitted.
+    """
+    rest_issue = {
+        "url": "https://api.github.com/repos/iwahbe/taskpull/issues/10",
+        "html_url": "https://github.com/iwahbe/taskpull/issues/10",
+        "node_id": "I_kwDORru3U8783GEO",
+        "number": 10,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/issues") and request.method == "POST":
+            return httpx.Response(201, json=rest_issue)
+        if b"addLabelsToLabelable" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_ADD_LABELS_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        await _bootstrap_rest_issue(
+            proxy, proxy_token, rest_issue["url"], rest_issue["node_id"]
+        )
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_ADD_LABELS_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_ADD_LABELS_RESPONSE
+
+    forwarded_mutations = [r for r in captured if b"addLabelsToLabelable" in r.content]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_ADD_LABELS_REQUEST
+
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_graphql_add_labels_to_unknown_labelable_is_rejected():
+    """Per the docstring contract: `addLabelsToLabelable` is rejected
+    when `input.labelableId` was not created by this session.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_ADD_LABELS_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert captured == []
+    assert queue.empty()
+
+
+# ---------------------------------------------------------------------------
+# removeLabelsFromLabelable — positive + negative
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_graphql_remove_labels_from_session_created_labelable_is_forwarded():
+    """Per the docstring contract: `removeLabelsFromLabelable` is allowed
+    when `input.labelableId` names an issue or PR created earlier in this
+    session. The proxy forwards the mutation unchanged. No event emitted.
+    """
+    rest_issue = {
+        "url": "https://api.github.com/repos/iwahbe/taskpull/issues/10",
+        "html_url": "https://github.com/iwahbe/taskpull/issues/10",
+        "node_id": "I_kwDORru3U8783GEO",
+        "number": 10,
+    }
+
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/issues") and request.method == "POST":
+            return httpx.Response(201, json=rest_issue)
+        if b"removeLabelsFromLabelable" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_REMOVE_LABELS_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        await _bootstrap_rest_issue(
+            proxy, proxy_token, rest_issue["url"], rest_issue["node_id"]
+        )
+        await asyncio.wait_for(queue.get(), timeout=0.5)
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_REMOVE_LABELS_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body).decode() == _FIXTURE_REMOVE_LABELS_RESPONSE
+
+    forwarded_mutations = [
+        r for r in captured if b"removeLabelsFromLabelable" in r.content
+    ]
+    assert len(forwarded_mutations) == 1
+    forwarded = forwarded_mutations[0]
+    assert forwarded.headers["authorization"] == "token gh-real-token"
+    assert forwarded.content == _FIXTURE_REMOVE_LABELS_REQUEST
+
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_graphql_remove_labels_from_unknown_labelable_is_rejected():
+    """Per the docstring contract: `removeLabelsFromLabelable` is rejected
+    when `input.labelableId` was not created by this session.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"), Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_REMOVE_LABELS_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert captured == []
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_graphql_node_resolution_is_persisted_in_state():
+    """Per the docstring contract: 'When a mutation references a
+    repositoryId not in the cache, the proxy resolves it by querying
+    GitHub's node API before making the allow/deny decision. Resolved
+    mappings are persisted in the session's repo_node_cache.'
+
+    After a `createIssue` mutation triggers a node-id lookup, the
+    session's `repo_nodes` cache must include the repositoryId →
+    "{owner}/{name}" mapping, and that mapping must survive a save/load
+    round-trip — otherwise a restarted proxy would re-query GitHub on
+    every subsequent mutation that references the same repository.
+
+    This test verifies persistence by loading the state directly from
+    the shared state manager after the mutation; it makes no assumption
+    about *how* the cache is kept in memory (only that the persisted
+    snapshot carries it).
+    """
+    # Defer import so the test is self-documenting about what it inspects.
+    from taskpull.gh_proxy_v2 import _ProxyState
+
+    resolve_calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body_text = request.content.decode()
+        if "node(id:" in body_text:
+            resolve_calls.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "data": {"node": {"name": "taskpull", "owner": {"login": "iwahbe"}}}
+                },
+            )
+        if "createIssue" in body_text:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_CREATE_ISSUE_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+    shared_state: InMemoryStateManager[_ProxyState] = InMemoryStateManager()
+
+    def shared_state_factory(model):
+        return shared_state
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=shared_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CREATE_ISSUE_REQUEST, proxy_token)
+        )
+        assert response.status_code == 200, response.body
+
+    # Sanity: node resolution actually fired on this first call.
+    assert len(resolve_calls) == 1
+
+    # The persisted state must now contain the resolved mapping.
+    persisted = await shared_state.load()
+    assert persisted is not None
+    assert session_id in persisted.sessions
+    assert persisted.sessions[session_id].repo_nodes == {
+        "R_kgDORru3Uw": "iwahbe/taskpull",
+    }
+
+
+@pytest.mark.asyncio
+async def test_close_event_is_channel_independent():
+    """Per the user-stated invariant: closing an issue must emit the same
+    `IssueClosed` event regardless of whether the close was issued via
+    REST PATCH or GraphQL `closeIssue`. The event is an observable of the
+    issue itself, not of the channel used to close it.
+
+    Scenario: two independent sessions each create issue #1 in
+    iwahbe/taskpull via REST. Session A closes via REST PATCH
+    state=closed. Session B closes via GraphQL closeIssue. The resulting
+    `IssueClosed` events must compare equal — both carrying the HTML
+    URL (https://github.com/...), the canonical event URL shape.
+    """
+    issue_url = "https://api.github.com/repos/iwahbe/taskpull/issues/1"
+    issue_node_id = "I_kwDORru3U8780gDh"
+    rest_issue = {
+        "url": issue_url,
+        "html_url": "https://github.com/iwahbe/taskpull/issues/1",
+        "node_id": issue_node_id,
+        "number": 1,
+    }
+    rest_issue_closed = {**rest_issue, "state": "closed"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/issues") and request.method == "POST":
+            return httpx.Response(201, json=rest_issue)
+        if request.method == "PATCH":
+            return httpx.Response(200, json=rest_issue_closed)
+        if b"closeIssue" in request.content:
+            return httpx.Response(
+                200,
+                content=_FIXTURE_CLOSE_ISSUE_RESPONSE.encode(),
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    async def _setup_session(
+        proxy: LiveGitHubProxy, session_id: SessionID, queue: asyncio.Queue
+    ) -> str:
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+        await _bootstrap_rest_issue(proxy, proxy_token, issue_url, issue_node_id)
+        await asyncio.wait_for(queue.get(), timeout=0.5)  # drain IssueCreated
+        return proxy_token
+
+    transport = httpx.MockTransport(handler)
+    queue_rest: asyncio.Queue[EngineEvent] = asyncio.Queue()
+    queue_gql: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy_rest = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue_rest,
+        )
+        proxy_gql = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue_gql,
+        )
+
+        token_rest = await _setup_session(
+            proxy_rest, SessionID("session-rest"), queue_rest
+        )
+        token_gql = await _setup_session(proxy_gql, SessionID("session-gql"), queue_gql)
+
+        # Session A: REST close.
+        patch_body = json.dumps({"state": "closed"}).encode()
+        await proxy_rest.handle(
+            _make_request(
+                method="PATCH",
+                url="https://api.github.com/repos/iwahbe/taskpull/issues/1",
+                headers={
+                    "host": "api.github.com",
+                    "authorization": f"token {token_rest}",
+                    "content-type": "application/json",
+                    "content-length": str(len(patch_body)),
+                },
+                body=patch_body,
+            )
+        )
+
+        # Session B: GraphQL close.
+        await proxy_gql.handle(_gql_request(_FIXTURE_CLOSE_ISSUE_REQUEST, token_gql))
+
+    rest_event = await asyncio.wait_for(queue_rest.get(), timeout=0.5)
+    gql_event = await asyncio.wait_for(queue_gql.get(), timeout=0.5)
+
+    assert rest_event == gql_event
+    assert isinstance(rest_event, IssueClosed)
