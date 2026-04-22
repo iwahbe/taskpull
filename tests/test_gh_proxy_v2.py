@@ -323,6 +323,29 @@ def _push_request(repo: str, ref: str, proxy_token: str) -> Request:
     )
 
 
+def _receive_pack_advertisement(refs: list[str] = []) -> bytes:
+    """Build a git-receive-pack refs advertisement body.
+
+    Matches GitHub's response to
+    `GET /{owner}/{repo}.git/info/refs?service=git-receive-pack`:
+    a service-header pkt-line, a flush-pkt, a ref-advertisement pkt-line per
+    existing ref (first carrying capabilities after a NUL byte), and a
+    trailing flush-pkt.
+    """
+
+    def _pkt(payload: bytes) -> bytes:
+        return f"{len(payload) + 4:04x}".encode() + payload
+
+    header = _pkt(b"# service=git-receive-pack\n")
+    sha = b"0" * 40
+    caps = b"report-status side-band-64k object-format=sha1"
+    ref_lines = b"".join(
+        _pkt(sha + b" " + r.encode() + (b"\x00" + caps if i == 0 else b"") + b"\n")
+        for i, r in enumerate(refs)
+    )
+    return header + b"0000" + ref_lines + b"0000"
+
+
 @pytest.mark.asyncio
 async def test_git_push_establishes_branch_and_restricts_subsequent_pushes():
     """Per the docstring contract for git push (receive-pack):
@@ -336,6 +359,14 @@ async def test_git_push_establishes_branch_and_restricts_subsequent_pushes():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(["refs/heads/main"]),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         return httpx.Response(
             200,
             content=b"",
@@ -362,19 +393,22 @@ async def test_git_push_establishes_branch_and_restricts_subsequent_pushes():
             _push_request("iwahbe/taskpull", "refs/heads/iwahbe/tighten", proxy_token)
         )
         assert first.status_code == 200
-        assert len(captured) == 1
+        pushes = [r for r in captured if r.url.path.endswith("/git-receive-pack")]
+        assert len(pushes) == 1
 
         second = await proxy.handle(
             _push_request("iwahbe/taskpull", "refs/heads/iwahbe/tighten", proxy_token)
         )
         assert second.status_code == 200
-        assert len(captured) == 2
+        pushes = [r for r in captured if r.url.path.endswith("/git-receive-pack")]
+        assert len(pushes) == 2
 
         third = await proxy.handle(
             _push_request("iwahbe/taskpull", "refs/heads/main", proxy_token)
         )
         assert third.status_code == 403
-        assert len(captured) == 2
+        pushes = [r for r in captured if r.url.path.endswith("/git-receive-pack")]
+        assert len(pushes) == 2
 
 
 @pytest.mark.asyncio
@@ -416,6 +450,173 @@ async def test_git_push_to_disallowed_repo_is_rejected():
     assert response.status_code == 403
     assert captured == []
     assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_git_push_first_push_to_nonexistent_branch_is_allowed():
+    """Per the docstring contract for git push (receive-pack): the first push
+    establishes the session branch only if the target ref does not already
+    exist on the remote. Verified by fetching the refs advertisement.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(
+                    ["refs/heads/main", "refs/heads/other"]
+                ),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
+        return httpx.Response(
+            200,
+            content=b"",
+            headers={"content-type": "application/x-git-receive-pack-result"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _push_request("iwahbe/taskpull", "refs/heads/new-branch", proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert any(r.url.path.endswith("/info/refs") for r in captured)
+    assert any(r.url.path.endswith("/git-receive-pack") for r in captured)
+
+
+@pytest.mark.asyncio
+async def test_git_push_first_push_to_existing_branch_is_rejected():
+    """Per the docstring contract for git push (receive-pack): the first push
+    must be rejected if the target ref already exists on the remote.
+    """
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(
+                    ["refs/heads/main", "refs/heads/existing"]
+                ),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
+        return httpx.Response(
+            200,
+            content=b"",
+            headers={"content-type": "application/x-git-receive-pack-result"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        response = await proxy.handle(
+            _push_request("iwahbe/taskpull", "refs/heads/existing", proxy_token)
+        )
+
+    assert response.status_code == 403
+    assert not any(r.url.path.endswith("/git-receive-pack") for r in captured)
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_git_push_subsequent_push_to_registered_branch_is_allowed_even_if_on_remote():
+    """Per the docstring contract for git push (receive-pack): the
+    ref-existence check applies only to the *first* push — it guards the
+    establishment of the session's branch. Once the session has claimed a
+    branch, subsequent pushes to that same branch must be allowed and
+    forwarded, even though the branch now exists on the remote (because
+    the session itself just created it).
+    """
+    captured: list[httpx.Request] = []
+    advertised_refs: list[str] = ["refs/heads/main"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(advertised_refs),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
+        return httpx.Response(
+            200,
+            content=b"",
+            headers={"content-type": "application/x-git-receive-pack-result"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        session_id = SessionID("session-abc")
+        proxy_token, _certs = await proxy.create_proxy_session(
+            session_id, Permissions(allowed_repo="iwahbe/taskpull")
+        )
+
+        first = await proxy.handle(
+            _push_request("iwahbe/taskpull", "refs/heads/feature", proxy_token)
+        )
+        assert first.status_code == 200
+
+        # Simulate that after the first push the branch now exists on the
+        # remote. A naive ref-existence check would reject this follow-up
+        # push; the proxy must skip the check because the session has
+        # already claimed this branch.
+        advertised_refs.append("refs/heads/feature")
+
+        second = await proxy.handle(
+            _push_request("iwahbe/taskpull", "refs/heads/feature", proxy_token)
+        )
+
+    assert second.status_code == 200
+    info_refs = [r for r in captured if r.url.path.endswith("/info/refs")]
+    pushes = [r for r in captured if r.url.path.endswith("/git-receive-pack")]
+    assert len(info_refs) == 1
+    assert len(pushes) == 2
 
 
 @pytest.mark.asyncio
@@ -569,6 +770,14 @@ async def test_rest_create_pr_after_pushing_branch_forwards_and_emits_event():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -618,8 +827,8 @@ async def test_rest_create_pr_after_pushing_branch_forwards_and_emits_event():
     assert response.status_code == 201
     assert json.loads(bytes(response.body)) == gh_pr
 
-    assert len(captured) == 2
-    forwarded_pr = captured[1]
+    assert len(captured) == 3
+    forwarded_pr = captured[2]
     assert forwarded_pr.method == "POST"
     assert str(forwarded_pr.url) == "https://api.github.com/repos/owner/repo/pulls"
     assert forwarded_pr.headers["authorization"] == "token gh-real-token"
@@ -901,6 +1110,14 @@ async def test_rest_create_pr_with_head_not_matching_session_branch_is_rejected(
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -929,7 +1146,7 @@ async def test_rest_create_pr_with_head_not_matching_session_branch_is_rejected(
             _push_request("owner/repo", "refs/heads/feature/login", proxy_token)
         )
         assert push.status_code == 200
-        assert len(captured) == 1
+        assert len(captured) == 2
 
         pr_body = json.dumps(
             {"title": "Add login", "head": "main", "base": "production"}
@@ -949,7 +1166,7 @@ async def test_rest_create_pr_with_head_not_matching_session_branch_is_rejected(
         response = await proxy.handle(pr_request)
 
     assert response.status_code == 403
-    assert len(captured) == 1
+    assert len(captured) == 2
     assert queue.empty()
 
 
@@ -972,6 +1189,14 @@ async def test_rest_patch_pr_close_emits_pr_closed_event():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -1042,8 +1267,8 @@ async def test_rest_patch_pr_close_emits_pr_closed_event():
     assert response.status_code == 200
     assert json.loads(bytes(response.body)) == gh_pr_closed
 
-    assert len(captured) == 3
-    forwarded_patch = captured[2]
+    assert len(captured) == 4
+    forwarded_patch = captured[3]
     assert forwarded_patch.method == "PATCH"
     assert str(forwarded_patch.url) == "https://api.github.com/repos/owner/repo/pulls/7"
     assert forwarded_patch.headers["authorization"] == "token gh-real-token"
@@ -1216,6 +1441,14 @@ async def test_graphql_create_pull_request_forwards_and_emits_event():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -1307,6 +1540,14 @@ async def test_graphql_create_pull_request_in_wrong_repo_is_rejected():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -1382,6 +1623,14 @@ async def test_graphql_create_pull_request_when_node_resolution_returns_null_is_
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -1462,6 +1711,14 @@ async def test_graphql_create_pull_request_with_wrong_head_branch_is_rejected():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -2255,6 +2512,127 @@ async def test_graphql_create_issue_in_wrong_repo_is_rejected():
     assert queue.empty()
 
 
+@pytest.mark.asyncio
+async def test_graphql_mutation_with_disallowed_bundled_selection_is_rejected():
+    """Per the docstring contract: "All other mutations are rejected."
+    Every selection of a mutation operation must be validated — a request
+    that bundles a permitted selection (e.g. `createIssue`) alongside any
+    unlisted selection must be rejected without forwarding the request,
+    so that a rogue selection cannot ride along on an allowed one.
+    """
+    resolve_response = {
+        "data": {"node": {"name": "taskpull", "owner": {"login": "iwahbe"}}}
+    }
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        body_text = request.content.decode()
+        if "node(id:" in body_text:
+            return httpx.Response(200, json=resolve_response)
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    bundled_body = json.dumps(
+        {
+            "query": (
+                "mutation Bundle($input: CreateIssueInput!) {"
+                "  createIssue(input: $input) { issue { id url } }"
+                '  deleteRepository(input: {repositoryId: "R_kgDORru3Uw"})'
+                " { clientMutationId }"
+                "}"
+            ),
+            "variables": {
+                "input": {
+                    "repositoryId": "R_kgDORru3Uw",
+                    "title": "t",
+                    "body": "b",
+                }
+            },
+        }
+    ).encode()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"),
+            Permissions(allowed_repo="iwahbe/taskpull"),
+        )
+
+        response = await proxy.handle(_gql_request(bundled_body, proxy_token))
+
+    assert response.status_code == 403
+    # The bundled mutation must not be forwarded — neither the allowed
+    # createIssue selection nor the rogue deleteRepository selection.
+    assert all(b"deleteRepository" not in r.content for r in captured)
+    assert all(b"createIssue" not in r.content for r in captured)
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_graphql_create_issue_failure_response_does_not_emit_event():
+    """Per the docstring contract: "Successful responses (both GraphQL and
+    REST) emit events". GraphQL mutations return HTTP 200 even on
+    failure, carrying `errors` and a null payload. The proxy must not
+    treat a failed mutation as successful — it must return the response
+    unchanged but must not crash, must not emit `IssueCreated`, and must
+    not record the (nonexistent) issue in session state.
+    """
+    resolve_response = {
+        "data": {"node": {"name": "taskpull", "owner": {"login": "iwahbe"}}}
+    }
+    failure_response = json.dumps(
+        {
+            "data": {"createIssue": None},
+            "errors": [{"message": "Resource not accessible by integration"}],
+        }
+    ).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body_text = request.content.decode()
+        if "node(id:" in body_text:
+            return httpx.Response(200, json=resolve_response)
+        if "createIssue" in body_text:
+            return httpx.Response(
+                200,
+                content=failure_response,
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        return httpx.Response(500)
+
+    transport = httpx.MockTransport(handler)
+    queue: asyncio.Queue[EngineEvent] = asyncio.Queue()
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        proxy = LiveGitHubProxy(
+            gh_token="gh-real-token",
+            http_client=client,
+            tls=_FakeTls(),
+            state_factory=_in_memory_state_factory,
+            queue=queue,
+        )
+        proxy_token, _certs = await proxy.create_proxy_session(
+            SessionID("session-abc"),
+            Permissions(allowed_repo="iwahbe/taskpull"),
+        )
+
+        response = await proxy.handle(
+            _gql_request(_FIXTURE_CREATE_ISSUE_REQUEST, proxy_token)
+        )
+
+    assert response.status_code == 200
+    assert bytes(response.body) == failure_response
+    assert queue.empty()
+
+
 # ---------------------------------------------------------------------------
 # closeIssue — positive + negative
 # ---------------------------------------------------------------------------
@@ -2393,6 +2771,14 @@ async def test_graphql_close_pr_created_by_session_forwards_and_emits_event():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,
@@ -2631,6 +3017,14 @@ async def test_graphql_update_pr_created_by_session_is_forwarded():
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
+        if request.url.path.endswith("/info/refs"):
+            return httpx.Response(
+                200,
+                content=_receive_pack_advertisement(),
+                headers={
+                    "content-type": "application/x-git-receive-pack-advertisement"
+                },
+            )
         if request.url.path.endswith("/git-receive-pack"):
             return httpx.Response(
                 200,

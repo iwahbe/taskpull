@@ -34,6 +34,44 @@ log = logging.getLogger(__name__)
 _OnSuccess = Callable[[Request, Response], Coroutine]
 
 
+def _parse_advertised_refs(body: bytes) -> set[str] | None:
+    """Extract ref names from a git-receive-pack refs advertisement.
+
+    Wire format: a service header pkt-line `# service=git-receive-pack\\n`,
+    a flush-pkt (`0000`), then one pkt-line per advertised ref in the form
+    `<sha> <ref>\\x00<caps>\\n` (capabilities appear on the first ref only),
+    terminated by a flush-pkt. Returns None on malformed input.
+    """
+    refs: set[str] = set()
+    i = 0
+    seen_service_header = False
+    while i < len(body):
+        if i + 4 > len(body):
+            return None
+        try:
+            length = int(body[i : i + 4], 16)
+        except ValueError:
+            return None
+        if length == 0:
+            i += 4
+            continue
+        if length < 4 or i + length > len(body):
+            return None
+        payload = body[i + 4 : i + length].rstrip(b"\n")
+        i += length
+        if not seen_service_header and payload.startswith(b"# service="):
+            seen_service_header = True
+            continue
+        nul = payload.find(b"\x00")
+        if nul >= 0:
+            payload = payload[:nul]
+        parts = payload.split(b" ", 1)
+        if len(parts) != 2:
+            return None
+        refs.add(parts[1].decode())
+    return refs
+
+
 def _parse_receive_pack_refs(body: bytes) -> list[str] | None:
     """Extract target ref names from a git-receive-pack pkt-line body.
 
@@ -96,8 +134,8 @@ class _SessionEntry(BaseModel):
     token: ProxyToken
     permissions: Permissions
     branch: str | None = None
-    created_issue_ids: dict[str, int] = {}  # Map from PR URL or Node ID to PR number
-    created_pr_ids: dict[str, int] = {}  # Map from Issue URL or Node ID to Issue number
+    created_issue_ids: dict[str, int] = {}  # Map from Issue URL/Node ID to number
+    created_pr_ids: dict[str, int] = {}  # Map from PR URL/Node ID to number
     repo_nodes: dict[str, str] = {}  # Map from Repo Node ID to "{org}/{name}"
     node_urls: dict[str, str] = {}  # Map from Issue/PR Node ID to HTML URL
 
@@ -151,15 +189,17 @@ class LiveGitHubProxy(GitHubProxy):
     Authorization header.  The proxy maps each token to a session, then decides whether to
     forward the request to GitHub (injecting the real token) or reject it.
 
+    Requests without an Authorization header, or with one that does not match
+    any known session token, are forwarded to GitHub unchanged (no injection,
+    no enforcement). Such requests are neither authenticated by the proxy nor
+    subject to per-session policy.
+
     ## Read requests
 
     All read operations are forwarded unconditionally:
     - GraphQL queries (any query, regardless of target repo)
     - REST GET/HEAD requests
     - Git upload-pack (clone/fetch)
-
-    GraphQL query responses are inspected to cache repository node IDs
-    (mapping node ID -> "owner/repo") for later mutation verification.
 
     ## Write requests
 
@@ -217,7 +257,7 @@ class LiveGitHubProxy(GitHubProxy):
 
     When a mutation references a repositoryId not in the cache, the proxy
     resolves it by querying GitHub's node API before making the allow/deny
-    decision. Resolved mappings are persisted in the session's repo_node_cache.
+    decision. Resolved mappings are persisted in the session's `repo_nodes`.
 
     """
 
@@ -471,6 +511,23 @@ class LiveGitHubProxy(GitHubProxy):
                 )
             return await self._forward(request, overwrite)
 
+        ad_resp = await self._http_client.request(
+            method="GET",
+            url=f"{request.url.scheme}://{request.url.netloc}/{owner}/{repo_name}/info/refs?service=git-receive-pack",
+            headers={"authorization": overwrite["authorization"]},
+        )
+        if ad_resp.status_code != 200:
+            return self._reject(
+                f"Cannot verify branch '{branch}': refs advertisement returned {ad_resp.status_code}"
+            )
+        advertised = _parse_advertised_refs(ad_resp.content)
+        if advertised is None:
+            return self._reject("Cannot parse refs advertisement")
+        if ref in advertised:
+            return self._reject(
+                f"Cannot establish session branch '{branch}': already exists on remote"
+            )
+
         async def _record_branch(_req: Request, _resp: Response):
             session.branch = branch
             await self._save()
@@ -506,6 +563,9 @@ class LiveGitHubProxy(GitHubProxy):
             raise NotImplementedError(f"{defn.operation} not handled")
 
         async def on_success(req, resp):
+            data = json.loads(bytes(resp.body))
+            if data.get("errors") or not data.get("data"):
+                return
             await asyncio.gather(*[f(req, resp) for f in on_success_hooks])
 
         return await self._forward(request, overwrite, on_success)
@@ -517,102 +577,115 @@ class LiveGitHubProxy(GitHubProxy):
         defn: OperationDefinitionNode,
         variables: dict[str, Any],
     ) -> _OnSuccess | None | Literal[False]:
+        hooks: list[_OnSuccess] = []
         for sel in defn.selection_set.selections:
             if not isinstance(sel, FieldNode):
                 return False
-            match sel.name.value:
-                case "createPullRequest":
-                    input = variables.get("input", {})
-                    repo_id = input.get("repositoryId")
-                    if not isinstance(repo_id, str):
-                        return False
-                    resolved = await self._resolve_repo_node(session, repo_id)
-                    if resolved is None or resolved != session.permissions.allowed_repo:
-                        return False
-                    if (
-                        session.branch is None
-                        or input.get("headRefName") != session.branch
-                    ):
-                        return False
+            result = await self._validate_graphql_mutation_selection(
+                session_id, session, sel, variables
+            )
+            if result is False:
+                return False
+            if result is not None:
+                hooks.append(result)
+        if not hooks:
+            return None
 
-                    async def on_pr_created(_req: Request, resp: Response):
-                        data = json.loads(bytes(resp.body))
-                        pr = data["data"]["createPullRequest"]["pullRequest"]
-                        session.add_pr(pr["url"], pr["id"])
-                        session.node_urls[pr["id"]] = pr["url"]
-                        await self._save()
-                        await self._queue.put(PRCreated(session_id, pr["url"]))
+        async def combined(req: Request, resp: Response) -> None:
+            await asyncio.gather(*[h(req, resp) for h in hooks])
 
-                    return on_pr_created
-                case "createIssue":
-                    input = variables.get("input", {})
-                    repo_id = input.get("repositoryId")
-                    if not isinstance(repo_id, str):
-                        return False
-                    resolved = await self._resolve_repo_node(session, repo_id)
-                    if resolved is None or resolved != session.permissions.allowed_repo:
-                        return False
+        return combined
 
-                    async def on_issue_created(_req: Request, resp: Response):
-                        data = json.loads(bytes(resp.body))
-                        issue = data["data"]["createIssue"]["issue"]
-                        session.add_issue(issue["url"], issue["id"])
-                        session.node_urls[issue["id"]] = issue["url"]
-                        await self._save()
-                        await self._queue.put(IssueCreated(session_id, issue["url"]))
-
-                    return on_issue_created
-                case "closeIssue":
-                    issue_id = variables.get("input", {}).get("issueId")
-                    if (
-                        not isinstance(issue_id, str)
-                        or issue_id not in session.created_issue_ids
-                    ):
-                        return False
-
-                    async def on_issue_closed(_req: Request, _resp: Response):
-                        await self._queue.put(IssueClosed(session.node_urls[issue_id]))
-
-                    return on_issue_closed
-                case "closePullRequest":
-                    pr_id = variables.get("input", {}).get("pullRequestId")
-                    if (
-                        not isinstance(pr_id, str)
-                        or pr_id not in session.created_pr_ids
-                    ):
-                        return False
-
-                    async def on_pr_closed(_req: Request, _resp: Response):
-                        await self._queue.put(PRClosed(session.node_urls[pr_id]))
-
-                    return on_pr_closed
-                case "updateIssue":
-                    issue_id = variables.get("input", {}).get("id")
-                    if (
-                        not isinstance(issue_id, str)
-                        or issue_id not in session.created_issue_ids
-                    ):
-                        return False
-                    return None
-                case "updatePullRequest":
-                    pr_id = variables.get("input", {}).get("pullRequestId")
-                    if (
-                        not isinstance(pr_id, str)
-                        or pr_id not in session.created_pr_ids
-                    ):
-                        return False
-                    return None
-                case "addLabelsToLabelable" | "removeLabelsFromLabelable":
-                    labelable_id = variables.get("input", {}).get("labelableId")
-                    if not isinstance(labelable_id, str) or (
-                        labelable_id not in session.created_issue_ids
-                        and labelable_id not in session.created_pr_ids
-                    ):
-                        return False
-                    return None
-                case _:
+    async def _validate_graphql_mutation_selection(
+        self,
+        session_id: SessionID,
+        session: _SessionEntry,
+        sel: FieldNode,
+        variables: dict[str, Any],
+    ) -> _OnSuccess | None | Literal[False]:
+        match sel.name.value:
+            case "createPullRequest":
+                input = variables.get("input", {})
+                repo_id = input.get("repositoryId")
+                if not isinstance(repo_id, str):
                     return False
-        return None
+                resolved = await self._resolve_repo_node(session, repo_id)
+                if resolved is None or resolved != session.permissions.allowed_repo:
+                    return False
+                if session.branch is None or input.get("headRefName") != session.branch:
+                    return False
+
+                async def on_pr_created(_req: Request, resp: Response):
+                    data = json.loads(bytes(resp.body))
+                    pr = data["data"]["createPullRequest"]["pullRequest"]
+                    session.add_pr(pr["url"], pr["id"])
+                    session.node_urls[pr["id"]] = pr["url"]
+                    await self._save()
+                    await self._queue.put(PRCreated(session_id, pr["url"]))
+
+                return on_pr_created
+            case "createIssue":
+                input = variables.get("input", {})
+                repo_id = input.get("repositoryId")
+                if not isinstance(repo_id, str):
+                    return False
+                resolved = await self._resolve_repo_node(session, repo_id)
+                if resolved is None or resolved != session.permissions.allowed_repo:
+                    return False
+
+                async def on_issue_created(_req: Request, resp: Response):
+                    data = json.loads(bytes(resp.body))
+                    issue = data["data"]["createIssue"]["issue"]
+                    session.add_issue(issue["url"], issue["id"])
+                    session.node_urls[issue["id"]] = issue["url"]
+                    await self._save()
+                    await self._queue.put(IssueCreated(session_id, issue["url"]))
+
+                return on_issue_created
+            case "closeIssue":
+                issue_id = variables.get("input", {}).get("issueId")
+                if (
+                    not isinstance(issue_id, str)
+                    or issue_id not in session.created_issue_ids
+                ):
+                    return False
+
+                async def on_issue_closed(_req: Request, _resp: Response):
+                    await self._queue.put(IssueClosed(session.node_urls[issue_id]))
+
+                return on_issue_closed
+            case "closePullRequest":
+                pr_id = variables.get("input", {}).get("pullRequestId")
+                if not isinstance(pr_id, str) or pr_id not in session.created_pr_ids:
+                    return False
+
+                async def on_pr_closed(_req: Request, _resp: Response):
+                    await self._queue.put(PRClosed(session.node_urls[pr_id]))
+
+                return on_pr_closed
+            case "updateIssue":
+                issue_id = variables.get("input", {}).get("id")
+                if (
+                    not isinstance(issue_id, str)
+                    or issue_id not in session.created_issue_ids
+                ):
+                    return False
+                return None
+            case "updatePullRequest":
+                pr_id = variables.get("input", {}).get("pullRequestId")
+                if not isinstance(pr_id, str) or pr_id not in session.created_pr_ids:
+                    return False
+                return None
+            case "addLabelsToLabelable" | "removeLabelsFromLabelable":
+                labelable_id = variables.get("input", {}).get("labelableId")
+                if not isinstance(labelable_id, str) or (
+                    labelable_id not in session.created_issue_ids
+                    and labelable_id not in session.created_pr_ids
+                ):
+                    return False
+                return None
+            case _:
+                return False
 
     async def _resolve_repo_node(
         self, session: _SessionEntry, node_id: str
