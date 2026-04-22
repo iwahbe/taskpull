@@ -62,6 +62,7 @@ All source lives under `src/taskpull/`.
 ## Code style
 
 - `| None` is only for modeling genuinely nullable data. Do not use `X | None = None` as a fallback default when the caller can pass the value explicitly.
+- Tests are function-based, not class-based. Write flat `def test_*` / `async def test_*` functions — do not group related tests under a `TestFoo` class.
 
 ## Reinstalling & restarting the daemon
 
