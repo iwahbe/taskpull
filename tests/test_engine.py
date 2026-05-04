@@ -10,6 +10,7 @@ from taskpull.engine import (
     Initializing,
 )
 from taskpull.engine_events import (
+    IssueClosed,
     IssueCreated,
     NewTask,
     PRClosed,
@@ -208,6 +209,43 @@ async def test_adhoc_issue_lifecycle() -> None:
     await engine.handle(SessionTerminated(session_id=sid))
     status = await engine.status()
     assert isinstance(status.tasks[name].phase, Closed)
+
+
+@pytest.mark.asyncio
+async def test_issue_goal_does_not_close_when_only_issue_is_closed() -> None:
+    engine, calls = _make_engine()
+    await engine.enable()
+
+    name = TaskName("file-bug")
+    sid = SessionID("session-0")
+    issue_url = "https://github.com/org/repo/issues/1"
+
+    await engine.handle(
+        NewTask(
+            name=name,
+            prompt="File a bug report",
+            goal=TaskGoal.ISSUE,
+            location="/repo",
+            key=None,
+            repeat=False,
+            source=TaskSource.ADHOC,
+        )
+    )
+    await engine.handle(SessionWorking(session_id=sid))
+    await engine.handle(IssueCreated(session_id=sid, issue_url=issue_url))
+
+    # The created issue is closed before the session goes idle.
+    await engine.handle(IssueClosed(issue_url=issue_url))
+
+    # Session goes idle. The only created issue is closed → goal not met →
+    # session must keep running so it can create another issue.
+    await engine.handle(SessionIdle(session_id=sid))
+
+    status = await engine.status()
+    assert isinstance(status.tasks[name].phase, Idle)
+    assert calls == [
+        Create(prompt=ISSUE_PROMPT, location="/repo", result=sid),
+    ], "engine must not have terminated the session"
 
 
 @pytest.mark.asyncio

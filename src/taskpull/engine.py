@@ -78,6 +78,7 @@ class _PRInfo(BaseModel):
 
 class _IssueInfo(BaseModel):
     url: str
+    closed: bool = False
 
 
 class SessionInfo(BaseModel):
@@ -297,7 +298,7 @@ class Engine:
             case PRClosed():
                 await self._handle_pr_closed(event)
             case IssueClosed():
-                pass
+                self._handle_issue_closed(event)
             case CIStatus():
                 self._handle_ci_status(event)
             case RestartSession():
@@ -381,9 +382,11 @@ class Engine:
             return
         ts.phase = Idle(session=session)
 
-        # If a session with goal == "issue" is idle and an issue has been created, that
-        # session should be cleaned up: its goal has been reached.
-        if session.goal == TaskGoal.ISSUE and len(session.issues) > 0:
+        # An ISSUE-goal session has met its goal only when at least one
+        # created issue is still open. If every issue this session created
+        # has since been closed, the goal isn't met yet — keep the session
+        # running so it can create another issue.
+        if session.goal == TaskGoal.ISSUE and any(not i.closed for i in session.issues):
             await self._sessions.terminate(event.session_id)
 
     async def _handle_session_terminated(self, event: SessionTerminated) -> None:
@@ -436,6 +439,16 @@ class Engine:
             return
         if session.goal == TaskGoal.PR:
             await self._sessions.terminate(session.session_id)
+
+    def _handle_issue_closed(self, event: IssueClosed) -> None:
+        for ts in self._tasks.values():
+            session = _session_of(ts.phase)
+            if session is None:
+                continue
+            for issue in session.issues:
+                if issue.url == event.issue_url:
+                    issue.closed = True
+                    return
 
     def _handle_ci_status(self, event: CIStatus) -> None:
         ts = self._task_for_pr(event.pr_url)
